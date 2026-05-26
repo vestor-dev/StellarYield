@@ -229,19 +229,35 @@ export class ProtocolCompatibilityEngine {
         recommendations,
         autoUpdateAvailable,
       };
-    } catch {
+    } catch (error) {
       console.error('Failed to fetch protocol version:', { protocolName });
-      return null;
+      return {
+        protocolName,
+        currentVersion: 'unknown',
+        latestVersion: 'unknown',
+        status: 'incompatible',
+        issues: [{
+          severity: 'critical',
+          component: 'all',
+          issue: 'Failed to fetch protocol version',
+          impact: 'Cannot verify compatibility',
+          recommendation: 'Check network connectivity or protocol status',
+          affectedStrategies: [],
+        }],
+        lastChecked: new Date().toISOString(),
+        recommendations: ['Manual verification required'],
+        autoUpdateAvailable: false,
+      };
     }
   }
 
   /**
    * Check a specific compatibility requirement
    */
-  private async checkComponentCompatibility(
-    componentName: string,
+  private async checkRequirement(
+    protocolName: string,
     requirements: CompatibilityRequirement,
-    _component: string,
+    currentVersion: ProtocolVersion,
   ): Promise<CompatibilityIssue[]> {
     const issues: CompatibilityIssue[] = [];
 
@@ -273,7 +289,7 @@ export class ProtocolCompatibilityEngine {
       }
 
       // Breaking changes check
-      const breakingChangesCheck = await this.checkBreakingChanges(protocolName, _currentVersion, requirements);
+      const breakingChangesCheck = await this.checkBreakingChanges(protocolName, currentVersion.version, requirements);
       if (breakingChangesCheck.hasBreakingChanges) {
         issues.push({
           severity: breakingChangesCheck.affectsCriticalPath ? 'critical' : 'high',
@@ -285,12 +301,12 @@ export class ProtocolCompatibilityEngine {
         });
       }
 
-    } catch {
+    } catch (error) {
       issues.push({
         severity: 'medium',
         component: requirements.component,
         issue: 'Compatibility check failed',
-        impact: 'Unable to verify component compatibility',
+        impact: `Unable to verify component compatibility: ${error instanceof Error ? error.message : 'Unknown error'}`,
         recommendation: 'Manual verification required',
         affectedStrategies: [],
       });

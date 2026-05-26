@@ -1,3 +1,8 @@
+import { AttributionReport } from '../services/portfolioAttributionService';
+import { CompatibilityReport } from '../services/protocolCompatibilityService';
+import { StrategyHealthScore } from '../services/strategyHealthService';
+import { DataSourceReliability } from '../services/yieldReliabilityService';
+
 // Analytics Helper Functions
 
 export function validateAttributionRequest(walletAddress: string, startTime: string, endTime: string): { valid: boolean; error?: string } {
@@ -18,63 +23,37 @@ export function validateAttributionRequest(walletAddress: string, startTime: str
   return { valid: true };
 }
 
-interface AttributionReport {
-  breakdown?: Array<{ contribution: number }>;
-  [key: string]: unknown;
-}
-
-interface CompatibilityReport {
-  issues?: Array<{ severity: string }>;
-  [key: string]: unknown;
-}
-
-interface HealthScore {
-  overallScore: number;
-  strategyId?: string;
-  [key: string]: unknown;
-}
-
-interface ReliabilityScore {
-  overallScore: number;
-  [key: string]: unknown;
-}
-
-interface Provider {
-  reliabilityScore?: number;
-  overallScore?: number;
-  [key: string]: unknown;
-}
-
 interface ProtocolReport {
   protocols?: Array<{ protocolName: string; status: string; criticalIssues?: number }>;
-  [key: string]: unknown;
+  issues?: Array<{ severity: string }>;
 }
 
-export function formatAttributionReport(report: AttributionReport): AttributionReport {
+export function formatAttributionReport(report: AttributionReport): any {
   return {
     ...report,
     formattedDate: new Date().toISOString(),
-    totalAttribution: report.breakdown?.reduce((sum: number, item: { contribution: number }) => sum + item.contribution, 0) || 0,
+    totalAttribution: (report as any).breakdown?.reduce((sum: number, item: { contribution: number }) => sum + item.contribution, 0) || 0,
   };
 }
 
-export function formatCompatibilityReport(report: CompatibilityReport): CompatibilityReport {
+export function formatCompatibilityReport(report: CompatibilityReport): any {
   return {
     ...report,
     formattedDate: new Date().toISOString(),
-    criticalIssues: report.issues?.filter((issue: { severity: string }) => issue.severity === 'critical') || [],
+    criticalIssues: (report as any).issues?.filter((issue: { severity: string }) => issue.severity === 'critical') || [],
   };
 }
 
-export function formatHealthScore(score: HealthScore): HealthScore {
+export function formatHealthScore(score: StrategyHealthScore): any {
+  const overallScore = score.overallScore;
   return {
     ...score,
-    status: score.overallScore >= 80 ? 'healthy' : score.overallScore >= 60 ? 'degraded' : 'critical',
+    status: overallScore >= 80 ? 'healthy' : overallScore >= 60 ? 'degraded' : 'critical',
     formattedDate: new Date().toISOString(),
   };
 }
 
-export function getCriticalHealthAlerts(scores: HealthScore[]): Array<{
+export function getCriticalHealthAlerts(scores: StrategyHealthScore[]): Array<{
   strategyId: string;
   severity: string;
   message: string;
@@ -90,19 +69,20 @@ export function getCriticalHealthAlerts(scores: HealthScore[]): Array<{
     }));
 }
 
-export function formatReliabilityScore(reliability: ReliabilityScore): ReliabilityScore {
+export function formatReliabilityScore(reliability: DataSourceReliability): any {
+  const score = reliability.reliabilityScore;
   return {
     ...reliability,
-    status: reliability.overallScore >= 80 ? 'reliable' : reliability.overallScore >= 60 ? 'moderate' : 'unreliable',
+    status: score >= 80 ? 'reliable' : score >= 60 ? 'moderate' : 'unreliable',
     formattedDate: new Date().toISOString(),
   };
 }
 
-export function getWeightedProviderSelection(providers: Provider[]): Array<Provider & { weight: number }> {
+export function getWeightedProviderSelection(providers: DataSourceReliability[]): any[] {
   return providers
     .map(provider => ({
       ...provider,
-      weight: (provider.overallScore || provider.reliabilityScore || 0) / 100, // Simple weighting based on score
+      weight: provider.reliabilityScore / 100,
     }))
     .sort((a, b) => b.weight - a.weight);
 }

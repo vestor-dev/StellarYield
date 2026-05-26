@@ -495,7 +495,7 @@ router.get('/dashboard', async (req, res) => {
     try {
       const compatibility = await protocolCompatibilityEngine.runCompatibilityCheck();
       dashboardData.compatibility = formatCompatibilityReport(compatibility);
-      (dashboardData.summary as { criticalIssues: number }).criticalIssues = compatibility.issues?.filter((issue: { severity: string }) => issue.severity === 'critical').length || 0;
+      (dashboardData.summary as { criticalIssues: number }).criticalIssues = compatibility.criticalIssues?.length || 0;
     } catch (error) {
       console.error('Compatibility data fetch failed:', error);
     }
