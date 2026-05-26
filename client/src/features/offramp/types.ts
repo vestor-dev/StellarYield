@@ -33,3 +33,25 @@ export interface WithdrawalRequest {
     bankName: string;
     accountHolder: string;
 }
+
+/**
+ * Off-Ramp Error Types
+ * Categorizes errors for better handling and user messaging
+ */
+export type OffRampErrorType =
+    | "UNSUPPORTED_REGION"
+    | "INVALID_BANK_ACCOUNT"
+    | "INVALID_MEMO"
+    | "PROVIDER_DOWNTIME"
+    | "INSUFFICIENT_LIQUIDITY"
+    | "AUTHENTICATION_FAILURE"
+    | "TRANSACTION_EXISTS"
+    | "NETWORK_ERROR"
+    | "UNKNOWN_ERROR";
+
+export interface OffRampError extends Error {
+    type: OffRampErrorType;
+    userMessage: string;
+    retryable: boolean;
+    transactionId?: string;
+}
