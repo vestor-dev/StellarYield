@@ -34,6 +34,23 @@ Keep your submission concise and ensure all checklist items are met prior to req
 - Store JSON snapshots in `smoke-results/` (gitignored) or upload as CI artifacts for operator history.
 - The transparency dashboard smoke panel can read a latest JSON payload from browser local storage under `stellar-yield.smoke-results`.
 
+### Automated release smoke report (GitHub Actions)
+
+After deploying frontend and backend, maintainers can run **Release smoke report** (`.github/workflows/release-smoke-report.yml`) via **Actions → Release smoke report → Run workflow**.
+
+- **Inputs:** `frontend_url`, `backend_url` (required), optional `issue_or_pr_number` to post a Markdown table on that issue or PR (same repo only; token permissions may restrict forks).
+- **Output:** Job summary + uploaded artifact `release-smoke-report-<run_id>` containing `smoke-report.md` with pass/fail per URL (backend health, yields, frontend root, static asset).
+- **Rerun:** In GitHub Actions, use **Re-run failed jobs** or **Re-run all jobs** on the workflow run. Locally, use the rerun snippet printed at the bottom of `smoke-report.md`, or:
+
+```bash
+FRONTEND_URL="https://your-frontend.example" BACKEND_URL="https://your-backend.example" \
+  node scripts/smoke-test.js --report --markdown-out=smoke-report.md
+```
+
+- **Portable report only (stdout):** `node scripts/smoke-test.js --report --markdown` (no file unless `--markdown-out=path` is set).
+
+Default checks expect HTTP **200** on `BACKEND_HEALTH_PATH` (default `/api/health`), `BACKEND_YIELDS_PATH` (default `/api/yields`), frontend `/`, and `FRONTEND_ASSET_PATH` (default `/favicon.svg`). Override via workflow dispatch inputs or the same-named environment variables.
+
 ### Frontend
 
 - Load the production site and verify the homepage renders without console-breaking errors.
