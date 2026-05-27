@@ -1,30 +1,37 @@
-# PR Description
+## Summary
+This PR implements fixes and documentation enhancements across four primary areas for the StellarYield platform:
+1. **API Fallback Behavior**: Implemented robust API base URL fallback logic to ensure Vercel preview environments fail gracefully when no backend URL is configured, avoiding incorrect default requests to localhost.
+2. **Issue Triage View**: Added a new maintainer workflow and search query documentation for triaging Stellar Wave issues, including a foundational `issue-triage.js` script.
+3. **UI Snapshot Checklist**: Updated the `.github/pull_request_template.md` and `CONTRIBUTING.md` to require UI snapshots (Desktop and Mobile) for any frontend visual changes.
+4. **Release Readiness**: Added a comprehensive `release-checklist.md` to ensure all Wave submissions meet CI, testing, and deployment standards before review.
 
-This PR implements fixes and features for four issues in the StellarYield platform:
+## Linked Issue
+Closes #435
+Closes #448
+Closes #444
+Closes #443
 
-## 1. Fix API base URL fallback behavior - #435
-Implemented a robust API base URL fallback strategy to handle deployed preview environments.
-- **Frontend**: `client/src/lib/api.ts`, `client/src/lib/api.test.ts`, `client/src/auth/session.ts`
-- **Features**: Avoids defaulting to localhost on Vercel preview environments unless configured. Handles missing `VITE_API_BASE_URL` with a graceful failure state.
-- **Fixes: #435**
+## Change Type
+- [x] Bug fix (non-breaking change which fixes an issue)
+- [x] New feature (non-breaking change which adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [x] Documentation update
+- [ ] Refactor
+- [ ] Other (please describe):
 
-## 2. Create maintainer dashboard issue triage view - #448
-Created documentation and tooling for maintainers to effectively triage community issues.
-- **Docs**: `docs/triage-process.md`, `scripts/issue-triage.js`
-- **Features**: Saved search queries for Unclaimed, Claimed, PR Ready, and Blocked states. Added a weekly triage workflow guide.
-- **Fixes: #448**
+## Testing
+- Added unit tests for `getApiBaseUrl` inside `client/src/lib/api.test.ts` to ensure that environment variables properly override the localhost fallback, and that preview environments without configurations safely throw an error.
+- Ran tests successfully to ensure no regressions with upstream API base URL configurations.
 
-## 3. Add UI snapshot checklist for visual contribution reviews - #444
-Added guidelines to ensure frontend PRs include necessary UI snapshots.
-- **Docs**: `CONTRIBUTING.md`, `.github/pull_request_template.md`
-- **Features**: Defined when screenshots are required (Desktop and Mobile), and added a checklist directly to the PR template.
-- **Fixes: #444**
+### Checklist
+- [x] Frontend changes tested
+- [ ] Backend changes tested
+- [ ] Contracts changes tested
+- [x] Documentation updated
+- [ ] Migrations tested (if applicable)
 
-## 4. Add release readiness checklist for Wave submissions - #443
-Added a structured checklist to ensure all Stellar Wave submissions meet the project's quality standards before review.
-- **Docs**: `docs/release-checklist.md`, `README.md`
-- **Features**: Outlined requirements for CI/CD, testing, UI snapshots, and documentation updates.
-- **Fixes: #443**
+## Screenshots (if applicable)
+No visual UI changes were made in this PR (only API configuration logic and documentation updates).
 
----
-All features and documentation have been implemented and validated against the repository's guidelines.
+## Deployment Notes
+For preview deployments on Vercel, ensure that either `VITE_API_BASE_URL` or `VITE_API_URL` is set in the environment variables. If they are missing, the frontend application will explicitly throw an `API_UNAVAILABLE` error to prevent silent failures and timeout requests to localhost.
