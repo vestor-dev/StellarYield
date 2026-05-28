@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
+import { FeeAssumptionsModal } from "../FeeAssumptionsModal";
 import {
   BarChart3,
   ArrowUpRight,
@@ -234,6 +235,7 @@ function SkeletonSummary() {
 
 export default function ApyDashboard() {
   const reducedMotion = useReducedMotion();
+  const [isFeeModalOpen, setIsFeeModalOpen] = useState(false);
   const [apyData, setApyData] = useState<ApyEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -486,7 +488,16 @@ export default function ApyDashboard() {
       {!loading && feeAttributionRows.length > 0 && (
         <section className="glass-panel p-5">
           <div className="mb-3">
-            <h3 className="text-lg font-semibold">Cross-Vault Fee Attribution</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold">Cross-Vault Fee Attribution</h3>
+              <button 
+                onClick={() => setIsFeeModalOpen(true)}
+                className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+                aria-label="View fee assumptions"
+              >
+                <Info size={16} />
+              </button>
+            </div>
             <p className="text-xs text-gray-400">
               Comparative fee drag by management, protocol, slippage, network, reward offsets, and unknown components.
             </p>
@@ -684,9 +695,15 @@ export default function ApyDashboard() {
                           % APY
                         </span>
                       </div>
-                      <p className="text-xs text-gray-500">
-                        Gross {(entry.totalApy ?? entry.apy).toFixed(2)}% | Drag{" "}
-                        {(entry.feeDragApy ?? 0).toFixed(2)}%
+                      <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                        <span>Gross {(entry.totalApy ?? entry.apy).toFixed(2)}% | Drag {(entry.feeDragApy ?? 0).toFixed(2)}%</span>
+                        <button
+                          onClick={() => setIsFeeModalOpen(true)}
+                          className="text-gray-500 hover:text-white transition-colors cursor-pointer"
+                          aria-label="View fee assumptions"
+                        >
+                          <Info size={12} />
+                        </button>
                       </p>
 
                       {/* 24h Change + TVL */}
@@ -974,6 +991,10 @@ export default function ApyDashboard() {
             rationale: [],
           },
         ]}
+      />
+      <FeeAssumptionsModal
+        isOpen={isFeeModalOpen}
+        onClose={() => setIsFeeModalOpen(false)}
       />
     </div>
   );

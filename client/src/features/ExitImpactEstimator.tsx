@@ -1,5 +1,6 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { AlertTriangle, Info, TrendingDown, TrendingUp } from "lucide-react";
+import { FeeAssumptionsModal } from "../components/FeeAssumptionsModal";
 
 interface ExitImpactEstimatorProps {
   amountUsd: number;
@@ -12,6 +13,7 @@ export const ExitImpactEstimator: React.FC<ExitImpactEstimatorProps> = ({
   poolLiquidityUsd,
   exitFeeBps,
 }) => {
+  const [isFeeModalOpen, setIsFeeModalOpen] = useState(false);
   const estimate = useMemo(() => {
     const priceImpact = amountUsd / (poolLiquidityUsd + amountUsd);
     const feeDrag = (amountUsd * exitFeeBps) / 10000;
@@ -31,9 +33,18 @@ export const ExitImpactEstimator: React.FC<ExitImpactEstimatorProps> = ({
 
   return (
     <div className="glass-panel p-6 space-y-4 border border-white/10">
-      <h3 className="text-lg font-bold flex items-center gap-2">
-        <Info size={20} className="text-[#6C5DD3]" />
-        Exit Impact Estimate
+      <h3 className="text-lg font-bold flex items-center justify-between">
+        <span className="flex items-center gap-2">
+          <Info size={20} className="text-[#6C5DD3]" />
+          Exit Impact Estimate
+        </span>
+        <button
+          onClick={() => setIsFeeModalOpen(true)}
+          className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+          aria-label="View fee assumptions"
+        >
+          <Info size={16} />
+        </button>
       </h3>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -73,6 +84,10 @@ export const ExitImpactEstimator: React.FC<ExitImpactEstimatorProps> = ({
           </p>
         </div>
       )}
+      <FeeAssumptionsModal
+        isOpen={isFeeModalOpen}
+        onClose={() => setIsFeeModalOpen(false)}
+      />
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Vault, TrendingUp, AlertTriangle, Save, RotateCcw } from "lucide-react";
+import { Vault, TrendingUp, AlertTriangle, Save, RotateCcw, Info } from "lucide-react";
+import { FeeAssumptionsModal } from "../../components/FeeAssumptionsModal";
 import { apiUrl } from "../../lib/api";
 
 interface AllocationRow {
@@ -39,6 +40,7 @@ const TreasurySimulation: React.FC = () => {
   const [totalCapital, setTotalCapital] = useState("1000000");
   const [allocations, setAllocations] = useState<AllocationRow[]>(DEFAULT_ALLOCATIONS);
   const [result, setResult] = useState<SimResult | null>(null);
+  const [isFeeModalOpen, setIsFeeModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -94,7 +96,16 @@ const TreasurySimulation: React.FC = () => {
       <div className="flex items-center gap-3">
         <Vault size={32} className="text-indigo-400" />
         <div>
-          <h2 className="text-3xl font-extrabold tracking-tight">Treasury Simulation</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-3xl font-extrabold tracking-tight">Treasury Simulation</h2>
+            <button
+              onClick={() => setIsFeeModalOpen(true)}
+              className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+              aria-label="View fee assumptions"
+            >
+              <Info size={18} />
+            </button>
+          </div>
           <p className="text-gray-400 text-sm">
             Model multi-position deployments before moving capital.
           </p>
@@ -230,7 +241,16 @@ const TreasurySimulation: React.FC = () => {
               <p className="text-xs text-gray-500">${result.projectedYieldUsd.toLocaleString()}</p>
             </div>
             <div className="glass-card p-4">
-              <p className="text-xs text-gray-400 uppercase tracking-widest">Rotation Cost</p>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400 uppercase tracking-widest">
+                <span>Rotation Cost</span>
+                <button
+                  onClick={() => setIsFeeModalOpen(true)}
+                  className="text-gray-500 hover:text-white transition-colors cursor-pointer"
+                  aria-label="View fee assumptions"
+                >
+                  <Info size={12} />
+                </button>
+              </div>
               <p className="text-2xl font-bold text-yellow-400">${result.totalRotationCostUsd.toLocaleString()}</p>
             </div>
             <div className="glass-card p-4">
@@ -281,6 +301,10 @@ const TreasurySimulation: React.FC = () => {
           </div>
         </div>
       )}
+      <FeeAssumptionsModal
+        isOpen={isFeeModalOpen}
+        onClose={() => setIsFeeModalOpen(false)}
+      />
     </div>
   );
 };
