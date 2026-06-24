@@ -16,6 +16,8 @@ import {
   applyPreset,
 } from "./portfolioUtils";
 import RebalancePreview from "./RebalancePreviewPanel";
+import { useWallet } from "../../context/useWallet";
+import { deposit } from "../../services/soroban";
 
 export interface PortfolioBuilderProps {
   walletAddress: string | null;
@@ -38,6 +40,7 @@ export default function PortfolioBuilder({
   walletAddress,
   availableVaults,
 }: PortfolioBuilderProps) {
+  const { signTransaction } = useWallet();
   const [totalAmount, setTotalAmount] = useState("");
   const [allocations, setAllocations] = useState<VaultAllocation[]>(() =>
     buildInitialAllocations(availableVaults),
@@ -48,6 +51,7 @@ export default function PortfolioBuilder({
   );
   const [txPhase, setTxPhase] = useState<TxPhase>("idle");
   const [error, setError] = useState("");
+  const [executeTx, setExecuteTx] = useState(false);
 
   const handlePresetApply = useCallback(
     (preset: PortfolioPreset) => {
@@ -96,26 +100,59 @@ export default function PortfolioBuilder({
     setTxPhase("building");
 
     try {
-      // In production: build batched XDR transaction
-      // For now: simulate the flow
-      setTxPhase("simulating");
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (executeTx) {
+        const activeAllocations = distributedAllocations.filter(
+          (a) => a.amount > 0n,
+        );
+        if (activeAllocations.length === 0) {
+          throw new Error("No allocations to execute");
+        }
+        for (const alloc of activeAllocations) {
+          // Deposit into each vault with 1% slippage limit
+          const minShares = (alloc.amount * 99n) / 100n;
+          const res = await deposit(
+            walletAddress,
+            alloc.amount,
+            minShares,
+            (phase) => setTxPhase(phase),
+            true,
+            signTransaction,
+          );
+          if (!res.success) {
+            throw new Error(
+              res.error || `Failed to deposit into ${alloc.vaultName}`,
+            );
+          }
+        }
+        setTxPhase("success");
+      } else {
+        // Mock flow
+        setTxPhase("simulating");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      setTxPhase("waiting_for_wallet");
-      await new Promise((resolve) => setTimeout(resolve, 500));
+        setTxPhase("waiting_for_wallet");
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-      setTxPhase("submitting");
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+        setTxPhase("submitting");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      setTxPhase("polling");
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+        setTxPhase("polling");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
-      setTxPhase("success");
+        setTxPhase("success");
+      }
     } catch (err) {
       setTxPhase("failure");
       setError(err instanceof Error ? err.message : "Deposit failed");
     }
-  }, [walletAddress, totalAmount, isValid]);
+  }, [
+    walletAddress,
+    totalAmount,
+    isValid,
+    executeTx,
+    distributedAllocations,
+    signTransaction,
+  ]);
 
   return (
     <div className="space-y-6">
@@ -253,6 +290,20 @@ export default function PortfolioBuilder({
           <span className="text-sm text-red-400">{error}</span>
         </div>
       )}
+
+      {/* Opt-in Checkbox */}
+      <div className="flex items-center gap-2 px-1">
+        <input
+          type="checkbox"
+          id="execute-tx-toggle"
+          checked={executeTx}
+          onChange={(e) => setExecuteTx(e.target.checked)}
+          className="rounded border-gray-600 bg-black/50 text-purple-600 focus:ring-purple-500"
+        />
+        <label htmlFor="execute-tx-toggle" className="text-sm text-gray-300">
+          Execute transaction on-chain (wallet signature required)
+        </label>
+      </div>
 
       {/* Execute Button */}
       <button

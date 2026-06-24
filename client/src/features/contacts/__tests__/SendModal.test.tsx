@@ -3,10 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { SendModal } from '../components/SendModal';
-import { ContactSuggestion } from '../types';
+import * as sorobanService from "../../../services/soroban";
+import * as StellarSdk from "@stellar/stellar-sdk";
 
 // Mock useContacts so AddressAutocomplete doesn't need a WalletProvider
 vi.mock('../hooks/useContacts', () => ({
@@ -34,16 +35,34 @@ vi.mock('../components/ContactsModal', () => ({
   ContactsModal: () => null,
 }));
 
+// Mock soroban service
+vi.mock("../../../services/soroban", () => ({
+  executeContractCallOn: vi.fn(),
+}));
+
 describe('SendModal', () => {
   const mockOnClose = vi.fn();
-  const mockWalletAddress = '0x1234567890123456789012345678901234567890';
+  // Use static valid Stellar keys to avoid Noble curves crypto issues in test env
+  const mockWalletAddress = "GBJKSX33PDI67V4CNWSIBRNDRLAV2HPWGOJJBNL5GK7WRVYSDS3WBHL7";
+  const mockRecipientAddress = "GBK2O2DY4DRH2CITGJMXN5PIRFTJ5U5SV5UDLRV73Z7LAPLKRNCRJOBN";
   const mockBalance = '1000.50';
+
+  // Mock useWallet
+  vi.mock("../../../context/useWallet", () => ({
+    useWallet: () => ({
+      walletAddress: "GBJKSX33PDI67V4CNWSIBRNDRLAV2HPWGOJJBNL5GK7WRVYSDS3WBHL7",
+      isConnected: true,
+      signTransaction: vi.fn().mockResolvedValue("mock-signed-xdr"),
+    }),
+  }));
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('VITE_USDC_SAC_CONTRACT_ID', 'CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB42P');
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.resetAllMocks();
   });
 
@@ -104,9 +123,9 @@ describe('SendModal', () => {
     );
 
     const addressInput = screen.getByPlaceholderText('Enter recipient address or search contacts...');
-    fireEvent.change(addressInput, { target: { value: '0x9876543210987654321098765432109876543210' } });
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
 
-    expect(addressInput).toHaveValue('0x9876543210987654321098765432109876543210');
+    expect(addressInput).toHaveValue(mockRecipientAddress);
   });
 
   it('should handle amount change', () => {
@@ -155,7 +174,7 @@ describe('SendModal', () => {
     const addressInput = screen.getByPlaceholderText('Enter recipient address or search contacts...');
     const amountInput = screen.getByPlaceholderText('0.00');
 
-    fireEvent.change(addressInput, { target: { value: '0x9876543210987654321098765432109876543210' } });
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
     fireEvent.change(amountInput, { target: { value: '100' } });
 
     expect(screen.getByText('To:')).toBeInTheDocument();
@@ -179,34 +198,11 @@ describe('SendModal', () => {
     const addressInput = screen.getByPlaceholderText('Enter recipient address or search contacts...');
     const amountInput = screen.getByPlaceholderText('0.00');
 
-    const fullAddress = '0x9876543210987654321098765432109876543210';
-    fireEvent.change(addressInput, { target: { value: fullAddress } });
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
     fireEvent.change(amountInput, { target: { value: '100' } });
 
-    expect(screen.getByText('0x9876...3210')).toBeInTheDocument();
-  });
-
-  it('should handle contact selection', () => {
-    const mockContact: ContactSuggestion = {
-      id: '1',
-      name: 'Alice',
-      address: '0x9876543210987654321098765432109876543210',
-      displayText: 'Alice (0x9876...)',
-    };
-
-    render(
-      <SendModal
-        isOpen={true}
-        onClose={mockOnClose}
-        walletAddress={mockWalletAddress}
-        balance={mockBalance}
-      />
-    );
-
-    const addressInput = screen.getByPlaceholderText('Enter recipient address or search contacts...');
-    // Typing the address directly doesn't set selectedContact — just verify address is set
-    fireEvent.change(addressInput, { target: { value: mockContact.address } });
-    expect(addressInput).toHaveValue(mockContact.address);
+    const expectedShortened = `${mockRecipientAddress.slice(0, 6)}...${mockRecipientAddress.slice(-4)}`;
+    expect(screen.getByText(expectedShortened)).toBeInTheDocument();
   });
 
   it('should show error for empty fields', async () => {
@@ -226,6 +222,29 @@ describe('SendModal', () => {
     });
   });
 
+  it('should show error for invalid address format', async () => {
+    render(
+      <SendModal
+        isOpen={true}
+        onClose={mockOnClose}
+        walletAddress={mockWalletAddress}
+        balance={mockBalance}
+      />
+    );
+
+    const addressInput = screen.getByPlaceholderText('Enter recipient address or search contacts...');
+    const amountInput = screen.getByPlaceholderText('0.00');
+    const sendButton = screen.getByRole('button', { name: /^Send$/i });
+
+    fireEvent.change(addressInput, { target: { value: 'invalid-stellar-address' } });
+    fireEvent.change(amountInput, { target: { value: '100' } });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Invalid recipient address format')).toBeInTheDocument();
+    });
+  });
+
   it('should show error for zero amount', async () => {
     render(
       <SendModal
@@ -240,7 +259,7 @@ describe('SendModal', () => {
     const amountInput = screen.getByPlaceholderText('0.00');
     const sendButton = screen.getByRole('button', { name: /^Send$/i });
 
-    fireEvent.change(addressInput, { target: { value: '0x9876543210987654321098765432109876543210' } });
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
     fireEvent.change(amountInput, { target: { value: '0' } });
     fireEvent.click(sendButton);
 
@@ -263,7 +282,7 @@ describe('SendModal', () => {
     const amountInput = screen.getByPlaceholderText('0.00');
     const sendButton = screen.getByRole('button', { name: /^Send$/i });
 
-    fireEvent.change(addressInput, { target: { value: '0x9876543210987654321098765432109876543210' } });
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
     fireEvent.change(amountInput, { target: { value: '2000' } }); // More than balance
     fireEvent.click(sendButton);
 
@@ -273,7 +292,10 @@ describe('SendModal', () => {
   });
 
   it('should handle successful send transaction', async () => {
-    vi.useFakeTimers();
+    vi.mocked(sorobanService.executeContractCallOn).mockResolvedValue({
+      success: true,
+      hash: "mock-tx-hash",
+    });
 
     render(
       <SendModal
@@ -288,27 +310,21 @@ describe('SendModal', () => {
     const amountInput = screen.getByPlaceholderText('0.00');
     const sendButton = screen.getByRole('button', { name: /^Send$/i });
 
-    fireEvent.change(addressInput, { target: { value: '0x9876543210987654321098765432109876543210' } });
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
     fireEvent.change(amountInput, { target: { value: '100' } });
     fireEvent.click(sendButton);
 
-    // Should show loading state immediately
-    expect(screen.getByText('Sending...')).toBeInTheDocument();
-    expect(sendButton).toBeDisabled();
-
-    // Fast-forward the 2-second simulated delay
-    await act(async () => {
-      vi.runAllTimers();
+    await waitFor(() => {
+      expect(screen.getByText('Send Successful')).toBeInTheDocument();
     });
-
-    expect(mockOnClose).toHaveBeenCalled();
-
-    vi.useRealTimers();
   });
 
   it('should handle send transaction error', async () => {
-    // The error display is tested via the synchronous validation paths.
-    // Here we verify the error element renders correctly for any error string.
+    vi.mocked(sorobanService.executeContractCallOn).mockResolvedValue({
+      success: false,
+      error: "Simulation failed: transaction rejected",
+    });
+
     render(
       <SendModal
         isOpen={true}
@@ -318,21 +334,24 @@ describe('SendModal', () => {
       />
     );
 
-    // Trigger the "insufficient balance" error path — this exercises the error UI
     const addressInput = screen.getByPlaceholderText('Enter recipient address or search contacts...');
     const amountInput = screen.getByPlaceholderText('0.00');
     const sendButton = screen.getByRole('button', { name: /^Send$/i });
 
-    fireEvent.change(addressInput, { target: { value: '0x9876543210987654321098765432109876543210' } });
-    fireEvent.change(amountInput, { target: { value: '99999' } });
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
+    fireEvent.change(amountInput, { target: { value: '100' } });
     fireEvent.click(sendButton);
 
     await waitFor(() => {
-      expect(screen.getByText('Insufficient balance')).toBeInTheDocument();
+      expect(screen.getByText('Simulation failed: transaction rejected')).toBeInTheDocument();
     });
   });
 
-  it('should open contacts modal when contacts button is clicked', () => {
+  it('should disable inputs/buttons during transaction', async () => {
+    vi.mocked(sorobanService.executeContractCallOn).mockImplementation(
+      () => new Promise(() => {}) // never resolves to keep in building/submitting state
+    );
+
     render(
       <SendModal
         isOpen={true}
@@ -342,34 +361,17 @@ describe('SendModal', () => {
       />
     );
 
-    const contactsButton = screen.getByTitle('Open address book');
-    fireEvent.click(contactsButton);
-
-    // ContactsModal should be rendered (we can see this by checking for the modal content)
-    // In a real test, we might need to mock the ContactsModal component
-  });
-
-  it('should disable send button when form is incomplete', () => {
-    render(
-      <SendModal
-        isOpen={true}
-        onClose={mockOnClose}
-        walletAddress={mockWalletAddress}
-        balance={mockBalance}
-      />
-    );
-
+    const addressInput = screen.getByPlaceholderText('Enter recipient address or search contacts...');
+    const amountInput = screen.getByPlaceholderText('0.00');
     const sendButton = screen.getByRole('button', { name: /^Send$/i });
 
-    // Button is enabled (not sending) — validation happens inside handleSend
-    expect(sendButton).not.toBeDisabled();
+    fireEvent.change(addressInput, { target: { value: mockRecipientAddress } });
+    fireEvent.change(amountInput, { target: { value: '100' } });
+    fireEvent.click(sendButton);
 
-    // Fill address and amount — still enabled
-    fireEvent.change(screen.getByPlaceholderText('Enter recipient address or search contacts...'), {
-      target: { value: '0x9876543210987654321098765432109876543210' },
+    await waitFor(() => {
+      expect(sendButton).toBeDisabled();
     });
-    fireEvent.change(screen.getByPlaceholderText('0.00'), { target: { value: '100' } });
-    expect(sendButton).not.toBeDisabled();
   });
 
   it('should reset form when modal closes', () => {
@@ -383,7 +385,7 @@ describe('SendModal', () => {
     );
 
     fireEvent.change(screen.getByPlaceholderText('Enter recipient address or search contacts...'), {
-      target: { value: '0x9876543210987654321098765432109876543210' },
+      target: { value: mockRecipientAddress },
     });
     fireEvent.change(screen.getByPlaceholderText('0.00'), { target: { value: '100' } });
 
@@ -391,7 +393,6 @@ describe('SendModal', () => {
     rerender(<SendModal isOpen={false} onClose={mockOnClose} walletAddress={mockWalletAddress} balance={mockBalance} />);
     rerender(<SendModal isOpen={true} onClose={mockOnClose} walletAddress={mockWalletAddress} balance={mockBalance} />);
 
-    // Re-query after rerender
     expect(screen.getByPlaceholderText('Enter recipient address or search contacts...')).toHaveValue('');
     expect(screen.getByPlaceholderText('0.00')).toHaveValue(null);
   });

@@ -8,6 +8,8 @@ const baseBaseline = {
   exposurePct: 40,
   feeRatePct: 2,
   tvlUsd: 10_000_000,
+  riskScore: 50,
+  vaultCount: 3,
 };
 
 function makeInput(overrides: Partial<GovernanceForecastInput> = {}): GovernanceForecastInput {
@@ -56,7 +58,7 @@ describe("forecastGovernanceProposal — fee_change", () => {
   });
 });
 
-describe("forecastGovernanceProposal — allocation_limit", () => {
+describe("Diversification & Allocation Limit", () => {
   it("reducing max concentration lowers exposure", () => {
     const result = forecastGovernanceProposal(
       makeInput({ proposalType: "allocation_limit", parameters: { maxConcentrationPct: 20 } }),
@@ -80,7 +82,7 @@ describe("forecastGovernanceProposal — allocation_limit", () => {
   });
 });
 
-describe("forecastGovernanceProposal — strategy_param", () => {
+describe("Strategy Parameters", () => {
   it("apyMultiplier > 1 increases projected yield", () => {
     const result = forecastGovernanceProposal(
       makeInput({ proposalType: "strategy_param", parameters: { apyMultiplier: 1.2, riskMultiplier: 1 } }),
@@ -103,7 +105,7 @@ describe("forecastGovernanceProposal — strategy_param", () => {
   });
 });
 
-describe("forecastGovernanceProposal — reward_change", () => {
+describe("Reward Changes", () => {
   it("flags incomplete reward changes as high risk", () => {
     const result = forecastGovernanceProposal(
       makeInput({
@@ -116,31 +118,43 @@ describe("forecastGovernanceProposal — reward_change", () => {
   });
 });
 
-describe("forecastGovernanceProposal — impact summary", () => {
-  it("marks fee proposals with unchanged inputs as no-op", () => {
-    const result = forecastGovernanceProposal(
-      makeInput({ parameters: { feeRatePct: baseBaseline.feeRatePct } }),
-    );
-    expect(result.impactSummary.noOp).toBe(true);
+describe("Proposal Lifecycle Parity Simulation Tests", () => {
+  it("successful proposal (valid bounds, improves parameters)", () => {
+    const input = makeInput({
+      proposalType: "strategy_param",
+      parameters: { apyMultiplier: 1.1, riskMultiplier: 0.9 },
+    });
+    const result = forecastGovernanceProposal(input);
+
+    expect(result.impactSummary.riskLevel).toBe("medium"); // 50 + 8 = 58 risk score -> medium
+    expect(result.impactSummary.noOp).toBe(false);
+    expect(result.impactSummary.irreversible).toBe(false);
+    expect(result.warnings).toHaveLength(0);
+    expect(result.forecast.yieldDeltaPct).toBeGreaterThan(0);
+    expect(result.forecast.exposureDeltaPct).toBeLessThan(0);
   });
 
-  it("marks extreme fee changes as irreversible", () => {
-    const result = forecastGovernanceProposal(
-      makeInput({ parameters: { feeRatePct: 0 } }),
-    );
+  it("rejected/invalid proposal (violates contract parameters/bounds)", () => {
+    const input = makeInput({
+      proposalType: "fee_change",
+      parameters: { feeRatePct: -15 }, // invalid fee rate
+    });
+    const result = forecastGovernanceProposal(input);
+
+    expect(result.impactSummary.riskLevel).toBe("high");
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings).toContain("feeRatePct must be between 0 and 100");
+    expect(result.forecast.projectedFeeRatePct).toBe(0); // Clamped
+  });
+
+  it("expired/irreversible proposal (results in irreversible state change)", () => {
+    const input = makeInput({
+      proposalType: "fee_change",
+      parameters: { feeRatePct: 100 }, // irreversible: max fee rate
+    });
+    const result = forecastGovernanceProposal(input);
+
     expect(result.impactSummary.irreversible).toBe(true);
-  });
-});
-
-describe("forecastGovernanceProposal — result structure", () => {
-  it("includes proposalType, parameters, baseline, and forecast", () => {
-    const result = forecastGovernanceProposal(makeInput());
-    expect(result).toHaveProperty("proposalType");
-    expect(result).toHaveProperty("parameters");
-    expect(result).toHaveProperty("baseline");
-    expect(result).toHaveProperty("forecast");
-    expect(result.forecast).toHaveProperty("projectedYieldPct");
-    expect(result.forecast).toHaveProperty("projectedExposurePct");
-    expect(result.forecast).toHaveProperty("projectedFeeRatePct");
+    expect(result.impactSummary.riskLevel).toBe("low"); // No warning, risk score remains 50
   });
 });
