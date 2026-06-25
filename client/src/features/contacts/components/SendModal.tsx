@@ -49,9 +49,9 @@ export function SendModal({ isOpen, onClose, walletAddress, balance }: SendModal
   const handleSavedContactSelect = (contact: Contact) => {
     const suggestion: ContactSuggestion = {
       id: contact.id,
-      name: 'Contact Name',
-      address: contact.encryptedAddress,
-      displayText: 'Contact Name',
+      name: contact.name ?? 'Unnamed Contact',
+      address: contact.address ?? '',
+      displayText: `${contact.name ?? 'Unnamed Contact'} (${contact.address ?? ''})`,
     };
     handleContactSelect(suggestion);
   };

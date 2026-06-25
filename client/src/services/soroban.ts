@@ -9,15 +9,13 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import freighter from "@stellar/freighter-api";
 import type { TxPhase } from "./transactionPhase";
 import { resolveDeadlineSeconds, type TxSettings } from "../features/settings/types";
-import { apiFetch } from "../lib/api";
+import { getContractId, validateContractRegistryEntry } from "./contractRegistry";
 
 // ── Configuration ───────────────────────────────────────────────────────
 
 export const RPC_URL = import.meta.env.VITE_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 export const NETWORK_PASSPHRASE =
   import.meta.env.VITE_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
-const CONTRACT_ID = import.meta.env.VITE_CONTRACT_ID ?? "";
-const ZAP_CONTRACT_ID = import.meta.env.VITE_ZAP_CONTRACT_ID ?? "";
 
 const POLL_INTERVAL_MS = 2_000;
 const POLL_TIMEOUT_MS = 30_000;
@@ -68,17 +66,15 @@ async function getRecommendedBaseFee(priority: FeePriority = "average"): Promise
 }
 
 function getContract(): StellarSdk.Contract {
-  if (!CONTRACT_ID) {
-    throw new Error("VITE_CONTRACT_ID is not configured");
-  }
-  return new StellarSdk.Contract(CONTRACT_ID);
+  const contractId = getContractId("vault");
+  validateContractRegistryEntry("vault", contractId);
+  return new StellarSdk.Contract(contractId);
 }
 
 export function getZapContract(): StellarSdk.Contract {
-  if (!ZAP_CONTRACT_ID) {
-    throw new Error("VITE_ZAP_CONTRACT_ID is not configured");
-  }
-  return new StellarSdk.Contract(ZAP_CONTRACT_ID);
+  const contractId = getContractId("zap");
+  validateContractRegistryEntry("zap", contractId);
+  return new StellarSdk.Contract(contractId);
 }
 
 /**

@@ -10,6 +10,8 @@ import {
   deriveEncryptionKey, 
   isValidWalletAddress,
   isValidContactName,
+  decryptName,
+  decryptAddress,
 } from '../utils/encryption';
 import {
   getContacts,
@@ -127,11 +129,23 @@ export function useContacts(): UseContactsReturn {
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      const contacts = await getContacts(encryptionKey);
+      const encryptedContacts = await getContacts(encryptionKey);
+      const decrypted = await Promise.all(
+        encryptedContacts.map(async (c) => {
+          try {
+            const name = await decryptName(c.encryptedName, encryptionKey);
+            const address = await decryptAddress(c.encryptedAddress, encryptionKey);
+            return { ...c, name, address };
+          } catch (err) {
+            console.error(`Failed to decrypt contact ${c.id}:`, err);
+            return { ...c, name: 'Decryption Error', address: '' };
+          }
+        })
+      );
       setState(prev => ({
         ...prev,
-        contacts,
-        filteredContacts: contacts,
+        contacts: decrypted,
+        filteredContacts: decrypted,
         loading: false,
       }));
     } catch (error) {
@@ -170,13 +184,14 @@ export function useContacts(): UseContactsReturn {
 
     try {
       const contact = await createContact(data, encryptionKey);
+      const decryptedContact = { ...contact, name: data.name, address: data.address };
       setState(prev => ({
         ...prev,
-        contacts: [...prev.contacts, contact],
-        filteredContacts: [...prev.filteredContacts, contact],
+        contacts: [...prev.contacts, decryptedContact],
+        filteredContacts: [...prev.filteredContacts, decryptedContact],
         loading: false,
       }));
-      return contact;
+      return decryptedContact;
     } catch (error) {
       const message = error instanceof ContactsApiError ? error.message : 'Failed to create contact';
       setState(prev => ({
@@ -207,8 +222,8 @@ export function useContacts(): UseContactsReturn {
     // Check for duplicates (excluding current contact)
     const existingContact = state.contacts.find(c => c.id === id);
     if (existingContact) {
-      const newName = updates.name || existingContact.encryptedName; // Would need decryption here
-      const newAddress = updates.address || existingContact.encryptedAddress; // Would need decryption here
+      const newName = updates.name !== undefined ? updates.name : (existingContact.name ?? '');
+      const newAddress = updates.address !== undefined ? updates.address : (existingContact.address ?? '');
       
       if (isDuplicate(newName, newAddress, id)) {
         throw new Error('A contact with this name or address already exists');
@@ -219,13 +234,19 @@ export function useContacts(): UseContactsReturn {
 
     try {
       const updatedContact = await updateContact(id, updates, encryptionKey);
+      const existing = state.contacts.find(c => c.id === id);
+      const decryptedUpdated = {
+        ...updatedContact,
+        name: updates.name !== undefined ? updates.name : existing?.name,
+        address: updates.address !== undefined ? updates.address : existing?.address,
+      };
       setState(prev => ({
         ...prev,
-        contacts: prev.contacts.map(c => c.id === id ? updatedContact : c),
-        filteredContacts: prev.filteredContacts.map(c => c.id === id ? updatedContact : c),
+        contacts: prev.contacts.map(c => c.id === id ? decryptedUpdated : c),
+        filteredContacts: prev.filteredContacts.map(c => c.id === id ? decryptedUpdated : c),
         loading: false,
       }));
-      return updatedContact;
+      return decryptedUpdated;
     } catch (error) {
       const message = error instanceof ContactsApiError ? error.message : 'Failed to update contact';
       setState(prev => ({
@@ -299,16 +320,29 @@ export function useContacts(): UseContactsReturn {
     try {
       const results = await searchContacts(query, encryptionKey);
       
-      return results.map(contact => {
-        // Note: This would need actual decryption of name/address
-        // For now, returning placeholder data
-        return {
-          id: contact.id,
-          name: 'Contact Name', // Would decrypt here
-          address: '0x...', // Would decrypt here
-          displayText: 'Contact Name (0x...)', // Would format with decrypted data
-        };
-      });
+      const suggestions = await Promise.all(
+        results.map(async (contact) => {
+          try {
+            const name = await decryptName(contact.encryptedName, encryptionKey);
+            const address = await decryptAddress(contact.encryptedAddress, encryptionKey);
+            return {
+              id: contact.id,
+              name,
+              address,
+              displayText: `${name} (${address})`,
+            };
+          } catch (err) {
+            console.error(`Failed to decrypt suggestion contact ${contact.id}:`, err);
+            return {
+              id: contact.id,
+              name: 'Decryption Error',
+              address: '',
+              displayText: 'Decryption Error',
+            };
+          }
+        })
+      );
+      return suggestions;
     } catch (error) {
       console.error('Failed to get suggestions:', error);
       return [];
@@ -319,10 +353,14 @@ export function useContacts(): UseContactsReturn {
   /**
    * Check for duplicate contacts
    */
-  const isDuplicate = useCallback((_name: string, _address: string, _excludeId?: string): boolean => {
-    // Note: This would need actual decryption of contact data
-    // For now, returning false as placeholder
-    return false;
+  const isDuplicate = useCallback((name: string, address: string, excludeId?: string): boolean => {
+    return state.contacts.some(c => {
+      if (excludeId && c.id === excludeId) return false;
+      return (
+        c.name?.toLowerCase().trim() === name.toLowerCase().trim() ||
+        c.address?.toLowerCase().trim() === address.toLowerCase().trim()
+      );
+    });
   }, [state.contacts]);
 
   return {
