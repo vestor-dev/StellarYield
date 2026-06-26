@@ -18,6 +18,9 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env, Symbol, Vec, Map,
 };
 
+pub mod replay;
+pub use replay::{ReplayProtection, ReplayStats};
+
 // ========== CONSTANTS ==========
 /// Contract metadata
 pub const CONTRACT_VERSION: u32 = 1;
@@ -295,14 +298,14 @@ impl BridgeRelayer {
         // Validate message format
         Self::validate_message_format(&message)?;
 
-        // Validate and update nonce
-        Self::validate_and_update_nonce(&env, &message)?;
-
         // Check if message already processed
         Self::check_message_processed(&env, &message)?;
 
+        // Validate and update nonce
+        Self::validate_and_update_nonce(&env, &message)?;
+
         // Compute message hash
-        let message_hash = Self::compute_message_hash(&message);
+        let message_hash = Self::compute_message_hash(&env, &message);
 
         // Verify Merkle proof (simplified for compilation)
         // In a real implementation, this would use proper Merkle verification
@@ -358,11 +361,11 @@ impl BridgeRelayer {
         // Validate message format
         Self::validate_message_format(&message)?;
 
-        // Validate and update nonce
-        Self::validate_and_update_nonce(&env, &message)?;
-
         // Check if message already processed
         Self::check_message_processed(&env, &message)?;
+
+        // Validate and update nonce
+        Self::validate_and_update_nonce(&env, &message)?;
 
         // Verify multi-signature (simplified for compilation)
         if multi_sig.signatures.len() < config.min_validators {
@@ -377,7 +380,7 @@ impl BridgeRelayer {
         } else {
             // Process immediately
             Self::process_message(&env, &message)?;
-            let message_hash = Self::compute_message_hash(&message);
+            let message_hash = Self::compute_message_hash(&env, &message);
             Ok(message_hash)
         }
     }
@@ -689,7 +692,7 @@ impl BridgeRelayer {
 
     /// Check if message has already been processed
     fn check_message_processed(env: &Env, message: &CrossChainMessage) -> Result<(), BridgeRelayerError> {
-        let message_hash = Self::compute_message_hash(message);
+        let message_hash = Self::compute_message_hash(env, message);
         let processed_key = symbol_short!("HASHES");
         let processed_hashes: Map<BytesN<32>, u64> = env.storage().instance().get(&processed_key).unwrap_or_else(|| Map::new(env));
 
@@ -701,17 +704,16 @@ impl BridgeRelayer {
     }
 
     /// Compute message hash
-    fn compute_message_hash(message: &CrossChainMessage) -> BytesN<32> {
+    fn compute_message_hash(env: &Env, message: &CrossChainMessage) -> BytesN<32> {
         // Simplified hash computation for compilation
         // In a real implementation, this would use proper cryptographic hashing
-        let env = Env::default();
-        let mut hash_input = Vec::new(&env);
+        let mut hash_input = Vec::new(env);
         hash_input.push_back(message.source_chain);
         hash_input.push_back(message.target_chain);
         hash_input.push_back(message.nonce as u32);
         
         // Return a mock hash for now
-        BytesN::from_array(&env, &[message.nonce as u8; 32])
+        BytesN::from_array(env, &[message.nonce as u8; 32])
     }
 
     /// Generate transfer ID
@@ -723,7 +725,7 @@ impl BridgeRelayer {
     /// Process a cross-chain message
     fn process_message(env: &Env, message: &CrossChainMessage) -> Result<(), BridgeRelayerError> {
         // Mark message as processed
-        let message_hash = Self::compute_message_hash(message);
+        let message_hash = Self::compute_message_hash(env, message);
         let processed_key = symbol_short!("HASHES");
         let mut processed_hashes: Map<BytesN<32>, u64> = env.storage().instance().get(&processed_key).unwrap_or_else(|| Map::new(env));
         processed_hashes.set(message_hash, env.ledger().timestamp());
