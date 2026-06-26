@@ -43,6 +43,11 @@ import presetsRouter from "./routes/presets";
 import analyticsRouter from "./routes/analytics";
 import offrampRouter from "./routes/offramp";
 import contactsRouter from "./routes/contacts";
+import rebalancesRouter from "./routes/rebalances";
+import sharePriceHistoryRouter from "./routes/sharePriceHistory";
+import reliabilityRouter from "./routes/reliability";
+import relayerStatusRouter from "./routes/relayerStatus";
+import riskRouter from "./routes/risk";
 
 import { createAuthChallenge, verifyAuthChallenge } from "./utils/stellarAuth";
 import {
@@ -133,7 +138,11 @@ export function createApp() {
   app.use("/api/analytics", analyticsRouter);
   app.use("/api/offramp", offrampRouter);
   app.use("/api/contacts", contactsRouter);
-
+  app.use("/api/rebalances", rebalancesRouter);
+  app.use("/api/vaults", sharePriceHistoryRouter);
+  app.use("/api/reliability", reliabilityRouter);
+  app.use("/api/relayer", relayerStatusRouter);
+  app.use("/api/risk", riskRouter);
 
   // Legacy JSON metrics (internal tooling)
   app.get("/api/metrics", getMetrics);
