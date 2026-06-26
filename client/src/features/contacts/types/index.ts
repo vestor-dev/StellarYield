@@ -7,6 +7,8 @@ export interface Contact {
   encryptedAddress: string; // Base64 encoded encrypted address
   createdAt: string;
   updatedAt: string;
+  name?: string; // Decrypted name (populated client-side)
+  address?: string; // Decrypted address (populated client-side)
 }
 
 /**

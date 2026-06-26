@@ -1,4 +1,8 @@
 import { PartialFillConfig, rebalanceQueueService } from '../services/rebalanceQueueService';
+import {
+  rebalanceExecutorService,
+  ExecutionAttempt,
+} from '../services/rebalanceExecutorService';
 
 /**
  * Rebalance Queue Processor Job
@@ -171,38 +175,68 @@ export async function runRebalanceQueueProcessorJob(config: JobConfig): Promise<
 }
 
 /**
- * Process a single queue entry.
- * This is where the actual rebalance execution would be called.
- * For now, it's a stub that can be integrated with contract interactions.
+ * Process a single queue entry through the real relayer-backed execution pipeline.
+ *
+ * Steps:
+ *  1. Acquire idempotency lock — prevents duplicate submissions on worker restart.
+ *  2. Mark entry as PROCESSING in the database.
+ *  3. Run dry-run validation before any submission.
+ *  4. Submit via RebalanceExecutorService (builds XDR → relayer fee-bump → submit → confirm).
+ *  5. Record real transaction hash and execution metadata.
+ *  6. On failure, classify the error and record it for retry scheduling.
  */
 async function processQueueEntry(entry: any, config: JobConfig): Promise<void> {
-  // Mark as processing
-  await rebalanceQueueService.markAsProcessing(entry.id);
-
-  // TODO: Integrate with contract/relayer to execute rebalance
-  // This would call the actual rebalance execution logic
-  // For now, we'll simulate success
-  
-  // Simulate execution result
-  const executionResult = {
-    queueEntryId: entry.id,
-    totalExecuted: 100, // Simulated: 100% executed
-    expectedAmount: 100,
-    filledPercentage: 100,
-    transactionHash: `0x${Math.random().toString(16).slice(2)}`,
-    executionDetails: {
-      status: 'completed',
-      allocationsAdjusted: entry.targetAllocations,
-      timestamp: new Date(),
-    },
+  const attempt: ExecutionAttempt = {
+    entryId: entry.id,
+    attemptNumber: (entry.attemptCount ?? 0) + 1,
+    startedAt: new Date(),
+    status: 'pending',
   };
 
-  // Record execution result
-  await rebalanceQueueService.recordPartialExecution(
-    entry.id,
-    executionResult,
-    config.partialFillConfig,
-  );
+  // Idempotency guard: skip if this entry is already being processed in this
+  // worker process (e.g. job overlaps due to slow execution).
+  if (rebalanceExecutorService['isLocked']?.(entry.id)) {
+    if (config.logResults) {
+      console.log(`Entry ${entry.id} already in-flight — skipping duplicate`);
+    }
+    return;
+  }
+
+  // Mark as processing before any network calls so concurrent workers see it.
+  await rebalanceQueueService.markAsProcessing(entry.id);
+
+  try {
+    const executionResult = await rebalanceExecutorService.execute(entry, attempt);
+
+    // Record real execution result — no fake hashes.
+    await rebalanceQueueService.recordPartialExecution(
+      entry.id,
+      executionResult,
+      config.partialFillConfig,
+    );
+
+    if (config.logResults) {
+      console.log(
+        `Entry ${entry.id} executed: tx=${executionResult.transactionHash} ` +
+        `fill=${executionResult.filledPercentage}%`,
+      );
+    }
+  } catch (error) {
+    const failureClass = rebalanceExecutorService.classifyError(
+      error instanceof Error ? error : new Error(String(error)),
+    );
+    const reason = `[${failureClass}] ${error instanceof Error ? error.message : String(error)}`;
+
+    if (config.logResults) {
+      console.error(`Entry ${entry.id} failed (${failureClass}):`, error);
+    }
+
+    await rebalanceQueueService.recordFailedAttempt(
+      entry.id,
+      reason,
+      config.partialFillConfig,
+    );
+  }
 }
 
 /**

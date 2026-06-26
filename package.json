@@ -5,6 +5,7 @@
     "smoke-test": "bash scripts/smoke-test.sh",
     "smoke-test:node": "node scripts/smoke-test.js",
     "smoke-test:portable": "node scripts/smoke-test.js",
+    "validate-workspace": "node scripts/validate-workspace.js",
     "test:provenance": "vitest run tests/services/provenance.test.ts --coverage"
   },
   "dependencies": {

@@ -5,6 +5,7 @@ import { ADMIN_ACTIONS } from "./governanceActions";
 import type { AdminAction, PendingTransaction } from "./types";
 import { AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { validateTransactionBuilder } from "./validation";
+import { validateContractRegistryEntry } from "../../services/contractRegistry";
 
 interface TransactionBuilderProps {
   threshold: number;
@@ -57,6 +58,7 @@ export default function TransactionBuilder({
     setError(null);
 
     try {
+      validateContractRegistryEntry("vault", contractId);
       const server = new StellarSdk.rpc.Server(RPC_URL);
       const contract = new StellarSdk.Contract(contractId);
       const source = await server.getAccount(walletAddress);

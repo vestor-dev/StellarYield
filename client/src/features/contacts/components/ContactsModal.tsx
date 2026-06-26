@@ -94,12 +94,10 @@ export function ContactsModal({ isOpen, onClose, onSelectContact }: ContactsModa
    * Handle edit contact
    */
   const handleEdit = (contact: Contact) => {
-    // Note: This would need decryption of contact data
-    // For now, using placeholder data
     setEditingContact(contact);
     setFormData({ 
-      name: 'Contact Name', // Would decrypt here
-      address: '0x...' // Would decrypt here
+      name: contact.name ?? '',
+      address: contact.address ?? ''
     });
     setShowAddForm(false);
   };
@@ -133,7 +131,10 @@ export function ContactsModal({ isOpen, onClose, onSelectContact }: ContactsModa
    * Handle view on blockchain explorer
    */
   const handleViewOnExplorer = (address: string) => {
-    const explorerUrl = `https://etherscan.io/address/${address}`;
+    const passphrase = import.meta.env.VITE_NETWORK_PASSPHRASE ?? "";
+    const isMainnet = passphrase.includes("mainnet") || passphrase.includes("Public Global");
+    const networkPath = isMainnet ? "public" : "testnet";
+    const explorerUrl = `https://stellar.expert/explorer/${networkPath}/account/${address}`;
     window.open(explorerUrl, '_blank');
   };
 
@@ -275,12 +276,10 @@ export function ContactsModal({ isOpen, onClose, onSelectContact }: ContactsModa
                 >
                   <div className="flex-1">
                     <h4 className="font-semibold text-white">
-                      {/* Would decrypt name here */}
-                      Contact Name
+                      {contact.name || 'Unnamed Contact'}
                     </h4>
                     <p className="text-sm text-gray-400 font-mono">
-                      {/* Would decrypt address here */}
-                      0x1234...5678
+                      {contact.address || 'No Address'}
                     </p>
                     <p className="text-xs text-gray-500">
                       Added {new Date(contact.createdAt).toLocaleDateString()}
@@ -297,16 +296,16 @@ export function ContactsModal({ isOpen, onClose, onSelectContact }: ContactsModa
                       </button>
                     )}
                     <button
-                      onClick={() => handleCopyAddress('0x...')} // Would decrypt address
+                      onClick={() => handleCopyAddress(contact.address ?? '')}
                       className="p-2 text-gray-400 hover:bg-slate-600 rounded-lg transition-colors"
                       title="Copy address"
                     >
                       <Copy size={16} />
                     </button>
                     <button
-                      onClick={() => handleViewOnExplorer('0x...')} // Would decrypt address
+                      onClick={() => handleViewOnExplorer(contact.address ?? '')}
                       className="p-2 text-gray-400 hover:bg-slate-600 rounded-lg transition-colors"
-                      title="View on Etherscan"
+                      title="View on StellarExpert"
                     >
                       <ExternalLink size={16} />
                     </button>

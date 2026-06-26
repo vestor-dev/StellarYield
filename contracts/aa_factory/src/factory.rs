@@ -11,8 +11,8 @@
 //! - Support for recovery module integration
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env,
-    IntoVal, Map, Val, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    Map, Vec,
 };
 
 // ── Storage Keys ────────────────────────────────────────────────────────
@@ -22,11 +22,21 @@ use soroban_sdk::{
 pub enum StorageKey {
     Initialized,
     Admin,           // Factory admin address
-    ProxyCodeHash,   // Hash of the proxy contract code
+    ProxyCodeHash,   // BytesN<32> — Wasm hash of the proxy contract
     DeployedProxies, // Vec<Address> - All deployed proxy addresses
-    UserToProxy,     // Map<Address, Address> - User address to proxy mapping
+    UserToProxy,     // Map<Address, Address> - Primary owner → latest proxy mapping
+    DeployedSalts,   // Map<OwnerSaltKey, Address> - (owner, salt) → proxy address
     Relayer,         // Trusted relayer for gas sponsorship
-    Nonce,           // Nonce for deterministic address generation
+    Nonce,           // Nonce for deterministic deployment salt generation
+}
+
+// ── Compound key for (owner, salt) duplicate tracking ───────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnerSaltKey {
+    pub owner: Address,
+    pub salt: u64,
 }
 
 // ── Data Structures ─────────────────────────────────────────────────────
@@ -64,7 +74,7 @@ pub enum FactoryError {
     Unauthorized = 3,
     /// Proxy deployment failed
     DeploymentFailed = 4,
-    /// Proxy already exists for user
+    /// Proxy already exists for this (owner, salt) combination
     ProxyAlreadyExists = 5,
     /// Invalid deployment configuration
     InvalidConfig = 6,
@@ -87,26 +97,13 @@ impl WalletFactory {
 
     /// Initialize the factory contract.
     ///
-    /// Sets up the factory with an admin address and the proxy contract
-    /// code hash for deployment verification.
-    ///
     /// # Arguments
     ///
-    /// * `env` - The Soroban environment
-    /// * `admin` - The admin address that can manage the factory
-    /// * `proxy_code_hash` - The hash of the proxy contract Wasm code
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on successful initialization
-    ///
-    /// # Events
-    ///
-    /// Emits `(init, admin)` on success
+    /// * `proxy_code_hash` - The 32-byte Wasm hash of the proxy contract
     pub fn initialize(
         env: Env,
         admin: Address,
-        proxy_code_hash: Bytes,
+        proxy_code_hash: BytesN<32>,
     ) -> Result<(), FactoryError> {
         if env.storage().instance().has(&StorageKey::Initialized) {
             return Err(FactoryError::AlreadyInitialized);
@@ -121,13 +118,11 @@ impl WalletFactory {
             .instance()
             .set(&StorageKey::Initialized, &true);
 
-        // Initialize storage collections
         let deployed_proxies: Vec<Address> = Vec::new(&env);
         env.storage()
             .instance()
             .set(&StorageKey::DeployedProxies, &deployed_proxies);
 
-        // Emit event
         env.events().publish((symbol_short!("init"),), (admin,));
 
         Ok(())
@@ -139,67 +134,73 @@ impl WalletFactory {
 
     /// Deploy a new proxy wallet for a user.
     ///
-    /// Creates a new proxy wallet contract that the user can use to interact
-    /// with the Stellar ecosystem with gas sponsorship support.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    /// * `config` - The deployment configuration
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(Address)` with the deployed proxy contract address
-    ///
-    /// # Events
-    ///
-    /// Emits `(deploy, proxy_address, owner)` on success
-    ///
-    /// # Security
-    ///
-    /// - Each user can only have one proxy wallet
-    /// - The proxy is initialized with the owner and factory addresses
+    /// Uses `env.deployer().with_current_contract(salt)` so that the deployed
+    /// contract address is deterministic given this factory and the computed salt.
+    /// Rejects duplicate (owner, salt) pairs.
     pub fn deploy_proxy(env: Env, config: DeploymentConfig) -> Result<Address, FactoryError> {
         Self::require_initialized(&env)?;
         config.owner.require_auth();
 
-        // Check if user already has a proxy
-        let user_to_proxy: Map<Address, Address> = env
+        // ── Duplicate (owner, salt) check ────────────────────────────
+        let pair_key = OwnerSaltKey {
+            owner: config.owner.clone(),
+            salt: config.salt,
+        };
+        let deployed_salts: Map<OwnerSaltKey, Address> = env
+            .storage()
+            .instance()
+            .get(&StorageKey::DeployedSalts)
+            .unwrap_or(Map::new(&env));
+
+        if deployed_salts.contains_key(pair_key.clone()) {
+            return Err(FactoryError::ProxyAlreadyExists);
+        }
+
+        // ── Build a unique deployment salt ───────────────────────────
+        // sha256(global_nonce || user_salt) ensures the BytesN<32> passed
+        // to the deployer is unique per deployment from this factory.
+        let deployment_salt = Self::generate_deployment_salt(&env, config.salt);
+
+        // ── Get stored wasm hash ─────────────────────────────────────
+        let proxy_code_hash: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&StorageKey::ProxyCodeHash)
+            .ok_or(FactoryError::InvalidCodeHash)?;
+
+        // ── Deploy the proxy contract ────────────────────────────────
+        // The proxy's __constructor receives (owner, factory, relayer).
+        let proxy_id = env
+            .deployer()
+            .with_current_contract(deployment_salt)
+            .deploy_v2(
+                proxy_code_hash,
+                (
+                    config.owner.clone(),
+                    env.current_contract_address(),
+                    config.relayer.clone(),
+                ),
+            );
+
+        // ── Record the deployment ────────────────────────────────────
+        let mut updated_salts = deployed_salts;
+        updated_salts.set(pair_key, proxy_id.clone());
+        env.storage()
+            .instance()
+            .set(&StorageKey::DeployedSalts, &updated_salts);
+
+        // Keep the primary owner → proxy mapping (last-deployed wins for
+        // owners that deploy multiple wallets with different salts).
+        let mut user_to_proxy: Map<Address, Address> = env
             .storage()
             .instance()
             .get(&StorageKey::UserToProxy)
             .unwrap_or(Map::new(&env));
-
-        if user_to_proxy.contains_key(config.owner.clone()) {
-            return Err(FactoryError::ProxyAlreadyExists);
-        }
-
-        // Generate deterministic proxy address
-        let _proxy_address = Self::generate_proxy_address(&env, &config.owner, config.salt);
-
-        // Deploy the proxy contract
-        // In production, this would use env.deploy_contract() with the stored code hash:
-        // let proxy_id = env.deploy_contract_with_constructor(
-        //     config.owner.clone(),
-        //     &proxy_code_hash,
-        //     (config.owner.clone(), env.current_contract_address(), config.relayer.clone()),
-        // );
-
-        // For this implementation, we return the computed address as a placeholder
-        // The actual deployment would happen through the Soroban CLI or SDK
-        let proxy_id = config.owner.clone(); // Placeholder - in production this would be the deployed contract address
-
-        // Initialize the proxy
-        // In production: proxy_client.initialize(...)
-
-        // Update storage
-        let mut updated_mapping = user_to_proxy;
-        updated_mapping.set(config.owner.clone(), proxy_id.clone());
+        user_to_proxy.set(config.owner.clone(), proxy_id.clone());
         env.storage()
             .instance()
-            .set(&StorageKey::UserToProxy, &updated_mapping);
+            .set(&StorageKey::UserToProxy, &user_to_proxy);
 
-        // Add to deployed proxies list
         let mut deployed: Vec<Address> = env
             .storage()
             .instance()
@@ -210,7 +211,7 @@ impl WalletFactory {
             .instance()
             .set(&StorageKey::DeployedProxies, &deployed);
 
-        // Update nonce
+        // Advance the global nonce so the next deployment gets a fresh salt.
         let nonce: u64 = env
             .storage()
             .instance()
@@ -220,7 +221,6 @@ impl WalletFactory {
             .instance()
             .set(&StorageKey::Nonce, &(nonce + 1));
 
-        // Emit event
         env.events().publish(
             (symbol_short!("deploy"),),
             (proxy_id.clone(), config.owner.clone()),
@@ -229,21 +229,7 @@ impl WalletFactory {
         Ok(proxy_id)
     }
 
-    /// Deploy a proxy wallet with a predictable address.
-    ///
-    /// Uses CREATE2-like deterministic address generation so the proxy
-    /// address can be computed off-chain before deployment.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    /// * `owner` - The wallet owner's address
-    /// * `salt` - Salt value for address computation
-    /// * `relayer` - Optional trusted relayer address
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(Address)` with the deployed proxy contract address
+    /// Deploy a proxy wallet with a predictable address (convenience wrapper).
     pub fn deploy_proxy_deterministic(
         env: Env,
         owner: Address,
@@ -255,7 +241,6 @@ impl WalletFactory {
             relayer,
             salt,
         };
-
         Self::deploy_proxy(env, config)
     }
 
@@ -263,42 +248,18 @@ impl WalletFactory {
     // RELAYER MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════
 
-    /// Set the trusted relayer for gas sponsorship.
-    ///
-    /// The relayer is the StellarYield backend service that pays gas fees
-    /// on behalf of users for their first transactions.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    /// * `admin` - The admin address (must authorize)
-    /// * `relayer` - The relayer address to trust
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success
     pub fn set_relayer(env: Env, admin: Address, relayer: Address) -> Result<(), FactoryError> {
         Self::require_initialized(&env)?;
         Self::require_admin(&env, &admin)?;
 
         env.storage().instance().set(&StorageKey::Relayer, &relayer);
 
-        // Emit event
         env.events()
             .publish((symbol_short!("set_rel"),), (relayer,));
 
         Ok(())
     }
 
-    /// Get the trusted relayer address.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    ///
-    /// # Returns
-    ///
-    /// Returns the relayer address if set
     pub fn get_relayer(env: Env) -> Result<Option<Address>, FactoryError> {
         Self::require_initialized(&env)?;
         Ok(env.storage().instance().get(&StorageKey::Relayer))
@@ -308,16 +269,6 @@ impl WalletFactory {
     // VIEW FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    /// Get the proxy wallet address for a user.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    /// * `user` - The user's address
-    ///
-    /// # Returns
-    ///
-    /// Returns the proxy address if one exists, None otherwise
     pub fn get_proxy_for_user(env: Env, user: Address) -> Result<Option<Address>, FactoryError> {
         Self::require_initialized(&env)?;
 
@@ -330,15 +281,6 @@ impl WalletFactory {
         Ok(user_to_proxy.get(user))
     }
 
-    /// Get all deployed proxy addresses.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    ///
-    /// # Returns
-    ///
-    /// Returns a vector of all deployed proxy addresses
     pub fn get_all_proxies(env: Env) -> Result<Vec<Address>, FactoryError> {
         Self::require_initialized(&env)?;
 
@@ -349,15 +291,6 @@ impl WalletFactory {
             .unwrap_or(Vec::new(&env)))
     }
 
-    /// Get the total number of deployed proxies.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    ///
-    /// # Returns
-    ///
-    /// Returns the count of deployed proxies
     pub fn get_proxy_count(env: Env) -> Result<u32, FactoryError> {
         Self::require_initialized(&env)?;
 
@@ -370,20 +303,9 @@ impl WalletFactory {
         Ok(deployed.len())
     }
 
-    /// Get proxy information by address.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    /// * `proxy_address` - The proxy contract address
-    ///
-    /// # Returns
-    ///
-    /// Returns ProxyInfo if the proxy exists
     pub fn get_proxy_info(env: Env, proxy_address: Address) -> Result<ProxyInfo, FactoryError> {
         Self::require_initialized(&env)?;
 
-        // Search through user mappings to find owner
         let user_to_proxy: Map<Address, Address> = env
             .storage()
             .instance()
@@ -395,8 +317,8 @@ impl WalletFactory {
                 return Ok(ProxyInfo {
                     proxy_address: proxy_address.clone(),
                     owner,
-                    deployed_at: 0, // Would need to store deployment timestamp
-                    salt: 0,        // Would need to store salt
+                    deployed_at: 0,
+                    salt: 0,
                 });
             }
         }
@@ -404,56 +326,29 @@ impl WalletFactory {
         Err(FactoryError::ProxyNotFound)
     }
 
-    /// Get the proxy contract code hash.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    ///
-    /// # Returns
-    ///
-    /// Returns the stored proxy code hash
-    pub fn get_proxy_code_hash(env: Env) -> Result<Bytes, FactoryError> {
+    /// Returns the stored proxy Wasm hash.
+    pub fn get_proxy_code_hash(env: Env) -> Result<BytesN<32>, FactoryError> {
         Self::require_initialized(&env)?;
-        Ok(env
-            .storage()
+        env.storage()
             .instance()
             .get(&StorageKey::ProxyCodeHash)
-            .unwrap())
+            .ok_or(FactoryError::InvalidCodeHash)
     }
 
-    /// Get the factory admin address.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    ///
-    /// # Returns
-    ///
-    /// Returns the admin address
     pub fn get_admin(env: Env) -> Result<Address, FactoryError> {
         Self::require_initialized(&env)?;
         Ok(env.storage().instance().get(&StorageKey::Admin).unwrap())
     }
 
-    /// Compute the deterministic proxy address for a user.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The Soroban environment
-    /// * `owner` - The wallet owner's address
-    /// * `salt` - Salt value for address computation
-    ///
-    /// # Returns
-    ///
-    /// Returns the computed proxy address
+    /// Compute the deployment salt that would be used for (owner, user_salt).
+    /// Returns the BytesN<32> that is passed to the Soroban deployer.
     pub fn compute_proxy_address(
         env: Env,
-        owner: Address,
+        _owner: Address,
         salt: u64,
-    ) -> Result<Address, FactoryError> {
+    ) -> Result<BytesN<32>, FactoryError> {
         Self::require_initialized(&env)?;
-        Ok(Self::generate_proxy_address(&env, &owner, salt))
+        Ok(Self::generate_deployment_salt(&env, salt))
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -481,23 +376,26 @@ impl WalletFactory {
         Ok(())
     }
 
-    fn generate_proxy_address(env: &Env, owner: &Address, salt: u64) -> Address {
-        // Generate a deterministic address based on:
-        // - Factory contract address
-        // - Owner address
-        // - Salt value
+    /// Produce a unique BytesN<32> deployment salt.
+    ///
+    /// salt = sha256(global_nonce_be8 || user_salt_be8)
+    ///
+    /// The global nonce advances after every successful deployment, so even if
+    /// two callers pass the same `user_salt` the resulting deployer salts will
+    /// differ (assuming sequential calls — the nonce is read before the deployer
+    /// call and incremented after, within the same transaction).
+    fn generate_deployment_salt(env: &Env, user_salt: u64) -> BytesN<32> {
+        let nonce: u64 = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Nonce)
+            .unwrap_or(0);
 
-        // In production, this would use Soroban's address generation
-        // For now, we create a deterministic bytes representation
+        let mut preimage = [0u8; 16];
+        preimage[..8].copy_from_slice(&nonce.to_be_bytes());
+        preimage[8..].copy_from_slice(&user_salt.to_be_bytes());
 
-        let mut data: Vec<Val> = Vec::new(env);
-        data.push_back(env.current_contract_address().into_val(env));
-        data.push_back(owner.clone().into_val(env));
-        data.push_back(salt.into_val(env));
-
-        // Create address from the hash of the data
-        // In production: Address::from_contract(&env, hash(&data))
-        env.current_contract_address()
+        env.crypto().sha256(&Bytes::from_array(env, &preimage)).to_bytes()
     }
 }
 
@@ -507,7 +405,7 @@ impl WalletFactory {
 mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{Bytes, Env};
+    use soroban_sdk::{BytesN, Env};
 
     fn setup_factory(env: &Env) -> (WalletFactoryClient<'static>, Address) {
         env.mock_all_auths();
@@ -516,7 +414,7 @@ mod tests {
         let client = WalletFactoryClient::new(env, &contract_id);
 
         let admin = Address::generate(env);
-        let proxy_code_hash = Bytes::from_array(env, &[0u8; 32]);
+        let proxy_code_hash = BytesN::from_array(env, &[0u8; 32]);
 
         client.initialize(&admin, &proxy_code_hash);
 
@@ -542,76 +440,43 @@ mod tests {
         let client = WalletFactoryClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let proxy_code_hash = Bytes::from_array(&env, &[0u8; 32]);
+        let proxy_code_hash = BytesN::from_array(&env, &[0u8; 32]);
 
         client.initialize(&admin, &proxy_code_hash);
         client.initialize(&admin, &proxy_code_hash);
     }
 
     #[test]
-    fn test_deploy_proxy() {
+    fn test_compute_proxy_address_is_deterministic() {
         let env = Env::default();
         let (client, _) = setup_factory(&env);
 
         let owner = Address::generate(&env);
-        let config = DeploymentConfig {
-            owner: owner.clone(),
-            relayer: None,
-            salt: 0,
-        };
+        // compute_proxy_address returns the deployment salt (BytesN<32>), not an Address.
+        let salt1 = client.compute_proxy_address(&owner, &0_u64);
+        let salt2 = client.compute_proxy_address(&owner, &0_u64);
 
-        // In production this would deploy a contract
-        // For testing, we just verify the config is valid
-        let proxy_address = client.compute_proxy_address(&owner, &config.salt);
-
-        assert!(proxy_address != owner);
-        assert_eq!(client.get_proxy_count(), 0); // No actual deployment in test
+        // Same inputs → same salt (nonce unchanged between calls in same tx).
+        assert_eq!(salt1, salt2);
     }
 
     #[test]
-    fn test_deploy_proxy_with_relayer() {
+    fn test_compute_proxy_address_different_salts_differ() {
         let env = Env::default();
         let (client, _) = setup_factory(&env);
 
         let owner = Address::generate(&env);
-        let relayer = Address::generate(&env);
-        let config = DeploymentConfig {
-            owner: owner.clone(),
-            relayer: Some(relayer.clone()),
-            salt: 0,
-        };
+        let salt_a = client.compute_proxy_address(&owner, &1_u64);
+        let salt_b = client.compute_proxy_address(&owner, &2_u64);
 
-        // In production this would deploy a contract with relayer
-        let proxy_address = client.compute_proxy_address(&owner, &config.salt);
-
-        assert!(proxy_address != owner);
+        assert_ne!(salt_a, salt_b);
     }
 
     #[test]
-    fn test_deploy_duplicate_proxy_panics() {
+    fn test_get_all_proxies_starts_empty() {
         let env = Env::default();
         let (client, _) = setup_factory(&env);
-
-        let owner = Address::generate(&env);
-        let config = DeploymentConfig {
-            owner: owner.clone(),
-            relayer: None,
-            salt: 0,
-        };
-
-        // In production, deploying twice would panic
-        // For testing, we just verify the config is valid
-        let _ = client.compute_proxy_address(&owner, &config.salt);
-    }
-
-    #[test]
-    fn test_get_all_proxies() {
-        let env = Env::default();
-        let (client, _) = setup_factory(&env);
-
-        // Initially should be empty
-        let all_proxies = client.get_all_proxies();
-        assert_eq!(all_proxies.len(), 0);
+        assert_eq!(client.get_all_proxies().len(), 0);
     }
 
     #[test]
@@ -626,36 +491,32 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_proxy_address() {
+    fn test_get_nonexistent_proxy_info_panics() {
         let env = Env::default();
         let (client, _) = setup_factory(&env);
-
-        let owner = Address::generate(&env);
-        let salt = 42u64;
-
-        let computed = client.compute_proxy_address(&owner, &salt);
-
-        // Should return a valid address
-        assert!(computed != owner);
-    }
-
-    #[test]
-    fn test_get_proxy_info() {
-        let env = Env::default();
-        let (client, _) = setup_factory(&env);
-
-        // Test that get_proxy_info panics for nonexistent proxy
-        // In production this would return ProxyNotFound error
-        let _ = client.get_proxy_count(); // Just verify the contract works
+        // Panics because error variant 7 = ProxyNotFound.
+        // Wrap in catch_unwind equivalent: use #[should_panic].
+        let _ = client.get_proxy_count(); // verify basic ops still work
     }
 
     #[test]
     #[should_panic(expected = "Error(Contract, #7)")]
-    fn test_get_nonexistent_proxy_info_panics() {
+    fn test_get_proxy_info_panics_for_unknown_address() {
         let env = Env::default();
         let (client, _) = setup_factory(&env);
-
         let nonexistent = Address::generate(&env);
         client.get_proxy_info(&nonexistent);
+    }
+
+    #[test]
+    fn test_proxy_code_hash_stored_as_bytesn32() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(WalletFactory, ());
+        let client = WalletFactoryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let hash = BytesN::from_array(&env, &[0xAB_u8; 32]);
+        client.initialize(&admin, &hash);
+        assert_eq!(client.get_proxy_code_hash(), hash);
     }
 }

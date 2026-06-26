@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Bell, Trash2, CheckCircle, Info, AlertTriangle, ExternalLink } from "lucide-react";
 import { useWallet } from "../../context/useWallet";
 import { apiUrl } from "../../lib/api";
+import { useBackendStatus } from "../../hooks/useBackendStatus";
 
 interface Notification {
   id: string;
@@ -17,6 +18,8 @@ const NotificationBell: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [backendError, setBackendError] = useState(false);
+  const backendStatus = useBackendStatus();
 
   useEffect(() => {
     if (isConnected && walletAddress) {
@@ -30,32 +33,50 @@ const NotificationBell: React.FC = () => {
   const fetchNotifications = async () => {
     try {
       const res = await fetch(apiUrl(`/api/notifications/${walletAddress}`));
+      if (!res.ok) {
+        setBackendError(true);
+        return;
+      }
       const data = await res.json();
       setNotifications(data);
       setUnreadCount(data.filter((n: Notification) => !n.isRead).length);
+      setBackendError(false);
     } catch (err) {
       console.error("Failed to fetch notifications", err);
+      setBackendError(backendStatus === "unavailable");
     }
   };
 
   const markAsRead = async (id: string) => {
     try {
-      await fetch(apiUrl(`/api/notifications/${id}/read`), { method: "PATCH" });
+      const res = await fetch(apiUrl(`/api/notifications/${id}/read`), { method: "PATCH" });
+      if (!res.ok) {
+        setBackendError(true);
+        return;
+      }
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
       setUnreadCount(count => count - 1);
+      setBackendError(false);
     } catch (err) {
       console.error("Failed to mark as read", err);
+      setBackendError(backendStatus === "unavailable");
     }
   };
 
   const clearAll = async () => {
     try {
       if (!walletAddress) return;
-      await fetch(apiUrl(`/api/notifications/${walletAddress}`), { method: "DELETE" });
+      const res = await fetch(apiUrl(`/api/notifications/${walletAddress}`), { method: "DELETE" });
+      if (!res.ok) {
+        setBackendError(true);
+        return;
+      }
       setNotifications([]);
       setUnreadCount(0);
+      setBackendError(false);
     } catch (err) {
       console.error("Failed to clear notifications", err);
+      setBackendError(backendStatus === "unavailable");
     }
   };
 
@@ -109,7 +130,15 @@ const NotificationBell: React.FC = () => {
             </div>
 
             <div className="overflow-y-auto max-h-[400px] divide-y divide-white/5 custom-scrollbar">
-              {notifications.length === 0 ? (
+              {backendError || backendStatus === "unavailable" ? (
+                <div className="p-12 text-center space-y-3">
+                  <div className="bg-amber-500/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertTriangle size={24} className="text-amber-500" />
+                  </div>
+                  <p className="text-amber-200 font-medium">Notifications Unavailable</p>
+                  <p className="text-amber-100/60 text-sm">Backend service is temporarily unavailable</p>
+                </div>
+              ) : notifications.length === 0 ? (
                 <div className="p-12 text-center space-y-3">
                   <div className="bg-white/5 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Bell size={24} className="text-gray-600" />

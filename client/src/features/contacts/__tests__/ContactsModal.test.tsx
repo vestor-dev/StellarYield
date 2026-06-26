@@ -142,6 +142,8 @@ describe('ContactsModal', () => {
         id: '1',
         encryptedName: 'encrypted-name-1',
         encryptedAddress: 'encrypted-address-1',
+        name: 'Test Contact Decrypted',
+        address: 'GABC1234567890123456789012345678901234567890',
         createdAt: '2023-01-01T00:00:00Z',
         updatedAt: '2023-01-01T00:00:00Z',
       },
@@ -158,10 +160,8 @@ describe('ContactsModal', () => {
       />
     );
 
-    // Note: Since data is encrypted, we're checking for placeholder text
-    // In a real implementation, this would show decrypted data
-    expect(screen.getByText('Contact Name')).toBeInTheDocument();
-    expect(screen.getByText('0x1234...5678')).toBeInTheDocument();
+    expect(screen.getByText('Test Contact Decrypted')).toBeInTheDocument();
+    expect(screen.getByText('GABC1234567890123456789012345678901234567890')).toBeInTheDocument();
   });
 
   it('should show add form when Add Contact is clicked', () => {
@@ -345,6 +345,8 @@ describe('ContactsModal', () => {
         id: '1',
         encryptedName: 'encrypted-name-1',
         encryptedAddress: 'encrypted-address-1',
+        name: 'Test Contact Decrypted',
+        address: 'GABC1234567890123456789012345678901234567890',
         createdAt: '2023-01-01T00:00:00Z',
         updatedAt: '2023-01-01T00:00:00Z',
       },
@@ -366,7 +368,7 @@ describe('ContactsModal', () => {
     fireEvent.click(copyButton);
 
     await waitFor(() => {
-      expect(mockClipboard.writeText).toHaveBeenCalledWith('0x...');
+      expect(mockClipboard.writeText).toHaveBeenCalledWith('GABC1234567890123456789012345678901234567890');
     });
   });
 
@@ -376,6 +378,8 @@ describe('ContactsModal', () => {
         id: '1',
         encryptedName: 'encrypted-name-1',
         encryptedAddress: 'encrypted-address-1',
+        name: 'Test Contact Decrypted',
+        address: 'GABC1234567890123456789012345678901234567890',
         createdAt: '2023-01-01T00:00:00Z',
         updatedAt: '2023-01-01T00:00:00Z',
       },
@@ -396,11 +400,11 @@ describe('ContactsModal', () => {
     );
 
     // Click explorer button
-    const explorerButton = screen.getByTitle('View on Etherscan');
+    const explorerButton = screen.getByTitle('View on StellarExpert');
     fireEvent.click(explorerButton);
 
     expect(window.open).toHaveBeenCalledWith(
-      'https://etherscan.io/address/0x...',
+      'https://stellar.expert/explorer/testnet/account/GABC1234567890123456789012345678901234567890',
       '_blank'
     );
   });

@@ -66,13 +66,13 @@ impl YieldVault {
         amount: i128,
         params: &Bytes,
     ) -> Result<i128, VaultError> {
-        Self::require_init(env)?;
+        YieldVault::require_init(env)?;
 
         if amount <= 0 {
             return Err(VaultError::ZeroAmount);
         }
 
-        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_addr: Address = Self::get_storage_required(env, &DataKey::Token)?;
         let token_client = token::Client::new(env, &token_addr);
         let vault_addr = env.current_contract_address();
 
@@ -106,10 +106,19 @@ impl YieldVault {
         }
 
         // Step 6: Update vault accounting (fee increases total assets)
-        let total_assets: i128 = env.storage().instance().get(&DataKey::TotalAssets).unwrap();
+        let total_assets: i128 = YieldVault::get_storage_required(env, &DataKey::TotalAssets)?;
         env.storage()
             .instance()
             .set(&DataKey::TotalAssets, &(total_assets + fee));
+
+        // AUDIT: Record flash loan and verify invariants
+        crate::YieldVault::validate_flash_loan_invariant(
+            env,
+            balance_before,
+            balance_after,
+            fee,
+        )?;
+        crate::YieldVault::record_flash_loan(env, amount, fee)?;
 
         env.events().publish(
             (symbol_short!("flash"),),
@@ -129,9 +138,9 @@ impl YieldVault {
 
     /// View function: get maximum available flash loan amount.
     pub fn max_flash_amount(env: &Env) -> Result<i128, VaultError> {
-        Self::require_init(env)?;
+        YieldVault::require_init(env)?;
 
-        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_addr: Address = YieldVault::get_storage_required(env, &DataKey::Token)?;
         let token_client = token::Client::new(env, &token_addr);
         let balance = token_client.balance(&env.current_contract_address());
 

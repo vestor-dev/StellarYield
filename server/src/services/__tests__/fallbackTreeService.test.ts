@@ -23,6 +23,10 @@ import {
   formatTraversalResult,
   extractFailedNodes,
   DEFAULT_FALLBACK_CONFIG,
+  InMemoryFallbackAuditStore,
+  AuditedFallbackTreeRegistry,
+  replayTraversal,
+  AuditRecord,
 } from '../fallbackTreeService';
 
 describe('Fallback Tree Service', () => {
@@ -1231,6 +1235,234 @@ describe('Fallback Tree Service', () => {
       const result = await traverseFallbackTree(tree, context);
 
       expect(result.selectedNode?.id).toBe('async-test');
+    });
+  });
+});
+
+// ── Audit / Persistence / Replay ──────────────────────────────────────────
+
+describe('Fallback Tree Audit and Replay', () => {
+  const healthyCtx: Partial<TraversalContext> = {
+    checkHealth: () => ({
+      status: 'healthy',
+      score: 90,
+      checkedAt: new Date().toISOString(),
+      reasons: [],
+    }),
+    checkBlocklist: () => ({ isBlocked: false, checkedAt: new Date().toISOString() }),
+    minHealthScore: 50,
+    allowDegraded: true,
+    maxDepth: 10,
+    now: 1_700_000_000_000,
+  };
+
+  const makeTree = (): FallbackNode => ({
+    id: 'primary',
+    name: 'Primary Strategy',
+    fallbacks: [
+      { id: 'secondary', name: 'Secondary Strategy', fallbacks: [] },
+    ],
+  });
+
+  // ── InMemoryFallbackAuditStore ──────────────────────────────────────────
+
+  describe('InMemoryFallbackAuditStore', () => {
+    it('saves and retrieves audit records', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      const record: AuditRecord = {
+        id: 'test-1',
+        treeKey: 'my-tree',
+        treeSnapshot: makeTree(),
+        healthInputs: {},
+        blocklistInputs: {},
+        contextParams: {
+          minHealthScore: 50,
+          allowDegraded: true,
+          maxDepth: 10,
+          now: Date.now(),
+        },
+        result: {
+          selectedNode: null,
+          path: [],
+          terminalFailure: true,
+          nodesEvaluated: 0,
+          maxDepthReached: 0,
+          completedAt: new Date().toISOString(),
+        },
+        recordedAt: new Date().toISOString(),
+      };
+
+      await store.save(record);
+      const all = await store.loadAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe('test-1');
+    });
+
+    it('filters records by tree key', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      for (const key of ['tree-a', 'tree-b', 'tree-a']) {
+        await store.save({
+          id: `${key}-${Math.random()}`,
+          treeKey: key,
+          treeSnapshot: makeTree(),
+          healthInputs: {},
+          blocklistInputs: {},
+          contextParams: { minHealthScore: 50, allowDegraded: true, maxDepth: 10, now: Date.now() },
+          result: { selectedNode: null, path: [], terminalFailure: true, nodesEvaluated: 0, maxDepthReached: 0, completedAt: new Date().toISOString() },
+          recordedAt: new Date().toISOString(),
+        });
+      }
+
+      const treeARecords = await store.loadByTreeKey('tree-a');
+      expect(treeARecords).toHaveLength(2);
+
+      const treeBRecords = await store.loadByTreeKey('tree-b');
+      expect(treeBRecords).toHaveLength(1);
+    });
+
+    it('returns null for unknown ID', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      expect(await store.loadById('does-not-exist')).toBeNull();
+    });
+
+    it('clears all records', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      await store.save({
+        id: 'r1', treeKey: 'k', treeSnapshot: makeTree(), healthInputs: {}, blocklistInputs: {},
+        contextParams: { minHealthScore: 50, allowDegraded: true, maxDepth: 10, now: Date.now() },
+        result: { selectedNode: null, path: [], terminalFailure: true, nodesEvaluated: 0, maxDepthReached: 0, completedAt: '' },
+        recordedAt: '',
+      });
+      await store.clear();
+      expect(await store.loadAll()).toHaveLength(0);
+    });
+  });
+
+  // ── AuditedFallbackTreeRegistry ─────────────────────────────────────────
+
+  describe('AuditedFallbackTreeRegistry', () => {
+    it('persists an audit record after each traversal', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      const registry = new AuditedFallbackTreeRegistry(store);
+      registry.registerTree('my-tree', makeTree());
+
+      await registry.traverse('my-tree', healthyCtx);
+
+      const records = await registry.getAuditRecords('my-tree');
+      expect(records).toHaveLength(1);
+      expect(records[0].treeKey).toBe('my-tree');
+      expect(records[0].result.selectedNode?.id).toBe('primary');
+    });
+
+    it('captures health and blocklist inputs in the audit record', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      const registry = new AuditedFallbackTreeRegistry(store);
+      registry.registerTree('k', makeTree());
+
+      await registry.traverse('k', healthyCtx);
+
+      const records = await registry.getAuditRecords('k');
+      expect(Object.keys(records[0].healthInputs)).toContain('primary');
+    });
+
+    it('records the selected node in the audit record', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      const registry = new AuditedFallbackTreeRegistry(store);
+
+      // Block the primary so secondary is selected
+      registry.registerTree('k', makeTree());
+      const ctx: Partial<TraversalContext> = {
+        ...healthyCtx,
+        checkBlocklist: (nodeId: string) => ({
+          isBlocked: nodeId === 'primary',
+          reason: nodeId === 'primary' ? 'Degraded' : undefined,
+          checkedAt: new Date().toISOString(),
+        }),
+      };
+
+      await registry.traverse('k', ctx);
+
+      const records = await registry.getAuditRecords('k');
+      expect(records[0].result.selectedNode?.id).toBe('secondary');
+    });
+  });
+
+  // ── replayTraversal ─────────────────────────────────────────────────────
+
+  describe('replayTraversal', () => {
+    it('replays a recorded decision and returns consistent=true', async () => {
+      const store = new InMemoryFallbackAuditStore();
+      const registry = new AuditedFallbackTreeRegistry(store);
+      registry.registerTree('k', makeTree());
+
+      await registry.traverse('k', healthyCtx);
+
+      const records = await store.loadAll();
+      const { result, consistent } = await replayTraversal(records[0]);
+
+      expect(consistent).toBe(true);
+      expect(result.selectedNode?.id).toBe(records[0].result.selectedNode?.id);
+    });
+
+    it('returns consistent=false if replayed result differs from record', async () => {
+      const store = new InMemoryFallbackAuditStore();
+
+      // Manufacture a record where primary was selected, but replay with
+      // all-blocked inputs so secondary gets selected instead.
+      const tree = makeTree();
+      const now = Date.now();
+
+      const record: AuditRecord = {
+        id: 'mismatched',
+        treeKey: 'k',
+        treeSnapshot: tree,
+        // Original: primary healthy → selected
+        healthInputs: {
+          primary: { status: 'healthy', score: 100, checkedAt: '', reasons: [] },
+          secondary: { status: 'healthy', score: 100, checkedAt: '', reasons: [] },
+        },
+        // Replay will use these — primary is blocked, secondary selected → mismatch
+        blocklistInputs: {
+          primary: { isBlocked: true, reason: 'Forced mismatch', checkedAt: '' },
+          secondary: { isBlocked: false, checkedAt: '' },
+        },
+        contextParams: { minHealthScore: 50, allowDegraded: true, maxDepth: 10, now },
+        result: {
+          selectedNode: { id: 'primary', name: 'Primary Strategy', fallbacks: [{ id: 'secondary', name: 'Secondary Strategy', fallbacks: [] }] },
+          path: [],
+          terminalFailure: false,
+          nodesEvaluated: 1,
+          maxDepthReached: 0,
+          completedAt: new Date(now).toISOString(),
+        },
+        recordedAt: new Date(now).toISOString(),
+      };
+
+      const { consistent } = await replayTraversal(record);
+      expect(consistent).toBe(false);
+    });
+
+    it('rejects cyclic routes during replay', async () => {
+      const child: FallbackNode = { id: 'child', name: 'Child', fallbacks: [] };
+      const root: FallbackNode = { id: 'root', name: 'Root', fallbacks: [child] };
+      // Introduce cycle by mutating (mirrors what validateFallbackTree catches)
+      (child as any).fallbacks = [root];
+
+      const now = Date.now();
+      const record: AuditRecord = {
+        id: 'cyclic',
+        treeKey: 'cyc',
+        treeSnapshot: root,
+        healthInputs: {},
+        blocklistInputs: {},
+        contextParams: { minHealthScore: 50, allowDegraded: true, maxDepth: 5, now },
+        result: { selectedNode: null, path: [], terminalFailure: true, nodesEvaluated: 0, maxDepthReached: 0, completedAt: '' },
+        recordedAt: '',
+      };
+
+      const { result } = await replayTraversal(record);
+      expect(result.terminalFailure).toBe(true);
+      expect(result.terminalFailureReason).toMatch(/cycle/i);
     });
   });
 });

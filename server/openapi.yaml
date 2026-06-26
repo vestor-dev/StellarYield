@@ -45,6 +45,14 @@ tags:
     description: Liquidity fragmentation metrics
   - name: Simulator
     description: Simulation endpoints for deposit, rebalance, and failover dry-runs (never executes on-chain)
+  - name: Contacts
+    description: Encrypted contact management (client-side encryption, server stores opaque blobs)
+  - name: Incidents
+    description: Protocol incident tracking and resolution
+  - name: Onramp
+    description: Fiat onramp provider webhook integration
+  - name: Deposits
+    description: Multi-asset deposit routing recommendations
 
 paths:
   /api/health:
@@ -1911,12 +1919,741 @@ paths:
                   value:
                     error: "Unknown strategy: no-such-strategy"
 
+  # ── Contacts ─────────────────────────────────────────────────────────────────
+
+  /api/contacts:
+    get:
+      summary: List all contacts
+      description: |
+        Returns all encrypted contacts for the authenticated wallet.
+        Data is encrypted on the client side; the server stores and returns
+        opaque base64 blobs without inspecting their contents.
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Stellar wallet address of the authenticated user
+      responses:
+        '200':
+          description: Contact list returned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contacts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contact'
+                  total:
+                    type: integer
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+    post:
+      summary: Create a new contact
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - encryptedName
+                - encryptedAddress
+              properties:
+                encryptedName:
+                  type: string
+                  description: Client-encrypted contact name (opaque base64 blob)
+                encryptedAddress:
+                  type: string
+                  description: Client-encrypted Stellar address (opaque base64 blob)
+      responses:
+        '201':
+          description: Contact created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contact:
+                    $ref: '#/components/schemas/Contact'
+        '400':
+          description: Missing or invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '409':
+          description: Contact with this encrypted address already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+
+  /api/contacts/search:
+    get:
+      summary: Search contacts
+      description: |
+        Returns all contacts for the wallet. Because data is encrypted,
+        the server cannot filter by content; the client performs post-decryption
+        filtering using the `q` query parameter as a hint.
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query (filtering happens client-side after decryption)
+      responses:
+        '200':
+          description: Contacts returned for client-side filtering
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contacts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contact'
+                  total:
+                    type: integer
+        '400':
+          description: Search query missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+
+  /api/contacts/export:
+    get:
+      summary: Export contacts as encrypted backup
+      description: Returns all contacts serialised into an encrypted backup blob for client-side storage or migration.
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Encrypted backup blob
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  encryptedBackup:
+                    type: string
+                    description: JSON-stringified backup envelope containing encrypted contact data
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+
+  /api/contacts/import:
+    post:
+      summary: Import contacts from encrypted backup
+      description: |
+        Accepts a previously-exported encrypted backup and imports contacts,
+        skipping any that already exist (duplicate encrypted address).
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - encryptedBackup
+              properties:
+                encryptedBackup:
+                  type: string
+                  description: JSON-stringified backup envelope produced by GET /api/contacts/export
+      responses:
+        '200':
+          description: Import completed; includes only newly created contacts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contacts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contact'
+                  total:
+                    type: integer
+        '400':
+          description: Missing or malformed backup payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+
+  /api/contacts/{id}:
+    get:
+      summary: Get a single contact
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Contact found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contact:
+                    $ref: '#/components/schemas/Contact'
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '404':
+          description: Contact not found or belongs to a different wallet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+    put:
+      summary: Update a contact
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                encryptedName:
+                  type: string
+                encryptedAddress:
+                  type: string
+      responses:
+        '200':
+          description: Contact updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contact:
+                    $ref: '#/components/schemas/Contact'
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '404':
+          description: Contact not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '409':
+          description: Duplicate encrypted address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+    delete:
+      summary: Delete a contact
+      tags:
+        - Contacts
+      parameters:
+        - name: x-wallet-address
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Contact deleted
+        '401':
+          description: Wallet address header missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+        '404':
+          description: Contact not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactError'
+
+  # ── Incidents ─────────────────────────────────────────────────────────────
+
+  /api/incidents:
+    get:
+      summary: List incidents
+      description: Returns a paginated list of incidents ordered by start time descending.
+      tags:
+        - Incidents
+      parameters:
+        - name: protocol
+          in: query
+          schema:
+            type: string
+          description: Filter by protocol name
+        - name: severity
+          in: query
+          schema:
+            type: string
+          description: Filter by severity level
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Filter by incident type
+        - name: resolved
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+          description: Filter by resolution status
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor from a previous response
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated incident list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Incident'
+                  pagination:
+                    type: object
+                    properties:
+                      nextCursor:
+                        type: string
+                        nullable: true
+                      hasMore:
+                        type: boolean
+                      limit:
+                        type: integer
+        '500':
+          description: Failed to fetch incidents
+    post:
+      summary: Create an incident
+      tags:
+        - Incidents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - protocol
+                - severity
+                - type
+                - title
+                - description
+                - startedAt
+              properties:
+                protocol:
+                  type: string
+                severity:
+                  type: string
+                type:
+                  type: string
+                title:
+                  type: string
+                description:
+                  type: string
+                affectedVaults:
+                  type: array
+                  items:
+                    type: string
+                startedAt:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Incident created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '400':
+          description: Missing required fields
+        '500':
+          description: Failed to create incident
+
+  /api/incidents/{id}:
+    get:
+      summary: Get a single incident
+      tags:
+        - Incidents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Incident found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '404':
+          description: Incident not found
+        '500':
+          description: Failed to fetch incident
+
+  /api/incidents/{id}/resolve:
+    patch:
+      summary: Resolve an incident
+      tags:
+        - Incidents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Incident resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '500':
+          description: Failed to resolve incident
+
+  /api/incidents/{id}/recommendations:
+    get:
+      summary: Get recommendations for an incident
+      tags:
+        - Incidents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recommendations for the incident
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        '500':
+          description: Failed to fetch recommendations
+
+  # ── Onramp ───────────────────────────────────────────────────────────────
+
+  /api/onramp/webhook:
+    post:
+      summary: Onramp provider webhook
+      description: |
+        Receives payment status callbacks from fiat onramp providers (e.g. Stripe,
+        MoonPay). Upserts the transaction record and triggers a DEPOSIT notification
+        when the status transitions to COMPLETED.
+      tags:
+        - Onramp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - provider
+                - txId
+                - status
+                - walletAddress
+                - amountFiat
+                - currency
+                - amountUsdc
+              properties:
+                provider:
+                  type: string
+                  description: Onramp provider identifier (e.g. "stripe", "moonpay")
+                txId:
+                  type: string
+                  description: Provider-assigned transaction ID
+                status:
+                  type: string
+                  enum: [PENDING, COMPLETED, FAILED]
+                walletAddress:
+                  type: string
+                amountFiat:
+                  type: number
+                currency:
+                  type: string
+                amountUsdc:
+                  type: number
+      responses:
+        '200':
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  transaction:
+                    type: object
+        '500':
+          description: Failed to process webhook
+
+  # ── Deposits ─────────────────────────────────────────────────────────────
+
+  /api/deposits/supported-assets:
+    get:
+      summary: List supported deposit assets
+      description: Returns the set of assets accepted for multi-asset deposit routing.
+      tags:
+        - Deposits
+      responses:
+        '200':
+          description: Supported assets configuration
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: Supported assets configuration unavailable
+
+  /api/deposits/recommend:
+    post:
+      summary: Get deposit routing recommendation
+      description: |
+        Returns a routing recommendation for a multi-asset deposit: per-asset
+        conversion/allocation path, expected vault-token output, estimated
+        network fees, and warnings for unsupported assets.
+      tags:
+        - Deposits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - assets
+              properties:
+                assets:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - symbol
+                      - amountInStroops
+                    properties:
+                      symbol:
+                        type: string
+                        description: Asset symbol (e.g. "USDC", "XLM")
+                      amountInStroops:
+                        type: string
+                        description: Positive integer amount in stroops as a decimal string
+      responses:
+        '200':
+          description: Routing recommendation
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid request body or asset parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+        '500':
+          description: Failed to compute recommendation
+
   # Intentionally excluded routes:
   # - Internal debugging and profiling endpoints under /internal/* are intentionally omitted from this public spec.
   # - Any admin-only endpoints that require interactive session tokens are documented above when needed; ephemeral or highly-sensitive debug routes are excluded.
 
 components:
   schemas:
+
+    # ── Contacts schemas ────────────────────────────────────────────────────
+
+    Contact:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        encrypted_name:
+          type: string
+          description: Client-encrypted contact name (opaque base64 blob)
+        encrypted_address:
+          type: string
+          description: Client-encrypted Stellar address (opaque base64 blob)
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - encrypted_name
+        - encrypted_address
+        - created_at
+        - updated_at
+
+    ContactError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+      required:
+        - error
+        - code
+
+    # ── Incidents schemas ───────────────────────────────────────────────────
+
+    Incident:
+      type: object
+      properties:
+        id:
+          type: string
+        protocol:
+          type: string
+        severity:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        affectedVaults:
+          type: array
+          items:
+            type: string
+        startedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolved:
+          type: boolean
 
     # ── Simulator schemas ───────────────────────────────────────────────────
 

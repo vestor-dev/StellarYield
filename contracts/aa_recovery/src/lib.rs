@@ -1,25 +1,32 @@
 #![no_std]
 
-//! # Smart Wallet Recovery Module
+//! # Smart Wallet Recovery Module with Integrated Lifecycle
 //!
 //! A decentralized recovery mechanism for smart wallets allowing users to designate
 //! "Guardians" who can help recover funds if the user loses access to their primary
 //! signing device or passkey.
 //!
 //! ## Features
-//! - Guardian management with configurable threshold
+//! - Guardian management with configurable threshold and timelocks
 //! - Time-locked recovery initiation for security
-//! - Owner can cancel recovery requests
+//! - Owner can cancel recovery requests and guardian changes
 //! - Key rotation after guardian signature threshold and timelock expiry
+//! - Integrated wallet lifecycle with state machine
+//! - Comprehensive audit trails for compliance
 //!
 //! ## Security
 //! - Guardians cannot instantly drain funds (timelock enforced)
 //! - Configurable guardian threshold prevents single-point collusion
 //! - Owner retains full control to cancel recovery attempts
+//! - Guardian changes require timelock delay
+//! - Wallet state machine prevents operations during recovery
+//! - All state changes are audit logged
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, Vec,
 };
+
+mod wallet_lifecycle;
 
 // ── Storage Keys ────────────────────────────────────────────────────────
 

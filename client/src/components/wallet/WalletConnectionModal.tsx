@@ -107,7 +107,7 @@ export default function WalletConnectionModal({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0f172a]/30 px-4 backdrop-blur-md"
       role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget) handleClose();
@@ -119,33 +119,33 @@ export default function WalletConnectionModal({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={`${titleId}-desc`}
-        className="glass-panel relative w-full max-w-md p-6 shadow-2xl"
+        className="glass-panel relative w-full max-w-md p-7 shadow-2xl bg-white/90 border border-slate-200/80 rounded-[24px]"
         onKeyDown={handleKeyDown}
       >
         <button
           type="button"
           onClick={handleClose}
-          className="absolute right-4 top-4 text-gray-400 transition-colors hover:text-white"
+          className="absolute right-5 top-5 p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer"
           aria-label="Close wallet connection dialog"
         >
-          <X size={18} aria-hidden="true" />
+          <X size={16} aria-hidden="true" />
         </button>
 
-        <div className="mb-6 flex items-center gap-3">
-          <div className="rounded-2xl bg-[#6C5DD3]/20 p-3 text-[#8f81f5]" aria-hidden="true">
+        <div className="mb-6 flex items-center gap-3.5">
+          <div className="rounded-2xl bg-[#214fba]/10 p-3 text-[#214fba]" aria-hidden="true">
             <Wallet size={24} />
           </div>
           <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-gray-400">
-              Stellar Wallet
+            <p className="text-[0.68rem] font-extrabold uppercase tracking-[0.2em] text-[#214fba]/80">
+              Stellar Network
             </p>
-            <h2 id={titleId} className="text-2xl font-bold text-white">
+            <h2 id={titleId} className="text-2xl font-serif font-semibold text-slate-900 italic">
               Connect Wallet
             </h2>
           </div>
         </div>
 
-        <p id={`${titleId}-desc`} className="mb-5 text-sm leading-6 text-gray-300">
+        <p id={`${titleId}-desc`} className="mb-6 text-sm leading-relaxed text-slate-500 font-medium font-sans">
           Choose a Stellar wallet to connect, or create a session-based smart
           wallet via email or social login.
         </p>
@@ -153,21 +153,22 @@ export default function WalletConnectionModal({
         {errorMessage ? (
           <div
             role="alert"
-            className="mb-5 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+            className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 font-semibold flex items-center gap-2"
           >
-            {errorMessage}
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0 animate-pulse" />
+            <span>{errorMessage}</span>
           </div>
         ) : null}
 
-        <div className="space-y-3">
+        <div className="space-y-4">
           {/* ── Extension wallets ── */}
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="rounded-[18px] border border-slate-200/60 bg-slate-50/40 p-4 shadow-sm">
             <div
-              className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#8f81f5]"
+              className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider"
               aria-hidden="true"
             >
-              <Wallet size={16} />
-              Browser Wallets
+              <Wallet size={14} className="text-[#214fba]" />
+              Browser Extension
             </div>
             <div
               className="grid grid-cols-1 gap-2 sm:grid-cols-3"
@@ -179,11 +180,11 @@ export default function WalletConnectionModal({
                   href="https://www.freighter.app/"
                   target="_blank"
                   rel="noreferrer"
-                  className="btn-secondary col-span-full flex w-full items-center justify-center gap-2 py-3"
+                  className="btn-secondary col-span-full flex w-full items-center justify-center gap-2 py-2.5 text-xs font-semibold rounded-xl cursor-pointer"
                   aria-label="Install Freighter wallet (opens in new tab)"
                 >
                   Install Freighter
-                  <ExternalLink size={16} aria-hidden="true" />
+                  <ExternalLink size={14} aria-hidden="true" />
                 </a>
               ) : (
                 <button
@@ -191,9 +192,9 @@ export default function WalletConnectionModal({
                   onClick={() => void handleConnect("freighter")}
                   disabled={isConnecting}
                   aria-label="Connect with Freighter wallet"
-                  className="btn-primary flex items-center justify-center gap-2 py-3 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="btn-primary flex items-center justify-center gap-2 py-2.5 text-xs font-semibold rounded-xl cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <Wallet size={16} aria-hidden="true" />
+                  <Wallet size={14} aria-hidden="true" />
                   Freighter
                 </button>
               )}
@@ -202,9 +203,9 @@ export default function WalletConnectionModal({
                 onClick={() => void handleConnect("xbull")}
                 disabled={isConnecting}
                 aria-label="Connect with xBull wallet"
-                className="btn-secondary flex items-center justify-center gap-2 py-3 disabled:cursor-not-allowed disabled:opacity-70"
+                className="btn-secondary flex items-center justify-center gap-2 py-2.5 text-xs font-semibold rounded-xl cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
               >
-                <Zap size={16} aria-hidden="true" />
+                <Zap size={14} aria-hidden="true" />
                 xBull
               </button>
               <button
@@ -212,26 +213,26 @@ export default function WalletConnectionModal({
                 onClick={() => void handleConnect("albedo")}
                 disabled={isConnecting}
                 aria-label="Connect with Albedo wallet"
-                className="btn-secondary flex items-center justify-center gap-2 py-3 disabled:cursor-not-allowed disabled:opacity-70"
+                className="btn-secondary flex items-center justify-center gap-2 py-2.5 text-xs font-semibold rounded-xl cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
               >
-                <Shield size={16} aria-hidden="true" />
+                <Shield size={14} aria-hidden="true" />
                 Albedo
               </button>
             </div>
           </div>
 
           {/* ── Smart wallet ── */}
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="rounded-[18px] border border-slate-200/60 bg-slate-50/40 p-4 shadow-sm">
             <div
-              className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-200"
+              className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider"
               aria-hidden="true"
             >
-              <Shield size={16} />
+              <Shield size={14} className="text-[#214fba]" />
               Smart Wallet Login
             </div>
             <label
               htmlFor="wallet-identifier"
-              className="mb-3 block text-xs uppercase tracking-[0.2em] text-gray-400"
+              className="mb-2 block text-[0.68rem] font-extrabold uppercase tracking-[0.15em] text-slate-400"
             >
               Email or Social Handle
             </label>
@@ -242,7 +243,7 @@ export default function WalletConnectionModal({
               onChange={(event) => setIdentifier(event.target.value)}
               placeholder="you@example.com or @stellarbuilder"
               aria-label="Email address or social handle for smart wallet login"
-              className="mb-3 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition-colors placeholder:text-gray-500 focus:border-cyan-400"
+              className="mb-4 w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-xs text-slate-800 outline-none transition-all placeholder:text-slate-400 focus:border-[#214fba] focus:ring-1 focus:ring-[#214fba]/30 shadow-inner"
             />
 
             <div
@@ -254,39 +255,39 @@ export default function WalletConnectionModal({
                 type="button"
                 onClick={() => void handleConnect("email")}
                 disabled={isConnecting}
-                className="btn-secondary flex items-center justify-center gap-2 py-3 disabled:cursor-not-allowed disabled:opacity-70"
+                className="btn-secondary flex items-center justify-center gap-2 py-2.5 text-xs font-semibold rounded-xl cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
                 aria-label="Sign in with email"
               >
-                <Mail size={16} aria-hidden="true" />
+                <Mail size={14} aria-hidden="true" />
                 Email
               </button>
               <button
                 type="button"
                 onClick={() => void handleConnect("google")}
                 disabled={isConnecting}
-                className="btn-secondary flex items-center justify-center gap-2 py-3 disabled:cursor-not-allowed disabled:opacity-70"
+                className="btn-secondary flex items-center justify-center gap-2 py-2.5 text-xs font-semibold rounded-xl cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
                 aria-label="Sign in with Google"
               >
-                <Shield size={16} aria-hidden="true" />
+                <Shield size={14} aria-hidden="true" />
                 Google
               </button>
               <button
                 type="button"
                 onClick={() => void handleConnect("github")}
                 disabled={isConnecting}
-                className="btn-secondary flex items-center justify-center gap-2 py-3 disabled:cursor-not-allowed disabled:opacity-70"
+                className="btn-secondary flex items-center justify-center gap-2 py-2.5 text-xs font-semibold rounded-xl cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
                 aria-label="Sign in with GitHub"
               >
-                <Github size={16} aria-hidden="true" />
+                <Github size={14} aria-hidden="true" />
                 GitHub
               </button>
             </div>
           </div>
 
           {verificationStatus ? (
-            <div className="rounded-2xl border border-white/5 bg-white/5 px-4 py-3 text-xs leading-5 text-gray-400">
+            <div className="rounded-xl border border-slate-200/50 bg-slate-50/30 px-4 py-2.5 text-[0.7rem] leading-normal text-slate-400 font-medium">
               Backend session challenge status:{" "}
-              <span className="font-semibold text-white">
+              <span className="font-semibold text-slate-600">
                 {verificationStatus === "verified"
                   ? "verified"
                   : "local fallback"}

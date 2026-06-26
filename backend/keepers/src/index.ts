@@ -7,6 +7,7 @@ import { CompoundScheduler } from './monitors/CompoundScheduler';
 import { LiquidationWorker } from './workers/LiquidationWorker';
 import { CompoundWorker } from './workers/CompoundWorker';
 import { KeeperSigner } from './signer/KeeperSigner';
+import { startKeeperHealthServer } from './api/queueHealth';
 
 /**
  * StellarYield Keeper Bot — main entry point.
@@ -35,6 +36,9 @@ async function main(): Promise<void> {
   attachQueueEvents(liquidationQueue.name);
   attachQueueEvents(compoundQueue.name);
 
+  // Start queue health HTTP server (before workers so it's ready when probes begin)
+  const healthServer = startKeeperHealthServer([liquidationQueue, compoundQueue]);
+
   // 4. Start workers
   const signer = new KeeperSigner();
   logger.info({ publicKey: signer.publicKey }, 'Keeper bot public key');
@@ -56,6 +60,8 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutdown signal received — draining workers...');
 
+    // Stop accepting health probe requests first, then drain in-flight work.
+    await new Promise<void>((resolve) => healthServer.close(() => resolve()));
     vaultMonitor.stop();
     await liquidationWorker.close();
     await compoundWorker.close();

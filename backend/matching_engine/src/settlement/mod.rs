@@ -30,6 +30,8 @@ pub struct SettlementData {
     pub price: u128,
     /// Timestamp
     pub timestamp: u64,
+    /// Per-settlement nonce for replay prevention beyond trade_id
+    pub nonce: String,
     /// Maker signature
     pub maker_signature: String,
     /// Taker signature
@@ -79,6 +81,7 @@ impl SettlementPayload {
             amount1,
             price: trade.price,
             timestamp: trade.timestamp,
+            nonce: uuid::Uuid::new_v4().to_string(),
             maker_signature: String::new(),
             taker_signature: String::new(),
             engine_signature: String::new(),
@@ -121,6 +124,7 @@ impl SettlementPayload {
         hasher.update(data.amount1.to_be_bytes());
         hasher.update(data.price.to_be_bytes());
         hasher.update(data.timestamp.to_be_bytes());
+        hasher.update(data.nonce.as_bytes());
         hex::encode(hasher.finalize())
     }
 
@@ -374,5 +378,56 @@ mod tests {
         let hash2 = SettlementPayload::hash_settlement_data(&settlement.data);
 
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_tampered_data_hash_mismatch() {
+        let mut csprng = OsRng;
+        let maker_key = SigningKey::generate(&mut csprng);
+        let taker_key = SigningKey::generate(&mut csprng);
+        let engine_key = SigningKey::generate(&mut csprng);
+
+        let trade = create_test_trade();
+        let mut settlement =
+            SettlementPayload::from_trade(&trade, &maker_key, &taker_key, &engine_key).unwrap();
+
+        let original_hash = settlement.data_hash.clone();
+
+        // Tamper with the settlement amount after signing
+        settlement.data.amount0 += 1;
+        let tampered_hash = SettlementPayload::hash_settlement_data(&settlement.data);
+
+        // A tampered amount must produce a different hash, making the
+        // stored data_hash a detectable mismatch
+        assert_ne!(
+            tampered_hash, original_hash,
+            "tampered settlement must produce a different hash"
+        );
+    }
+
+    #[test]
+    fn test_nonce_uniqueness() {
+        let mut csprng = OsRng;
+        let maker_key = SigningKey::generate(&mut csprng);
+        let taker_key = SigningKey::generate(&mut csprng);
+        let engine_key = SigningKey::generate(&mut csprng);
+
+        let trade = create_test_trade();
+
+        let s1 = SettlementPayload::from_trade(&trade, &maker_key, &taker_key, &engine_key)
+            .unwrap();
+        let s2 = SettlementPayload::from_trade(&trade, &maker_key, &taker_key, &engine_key)
+            .unwrap();
+
+        // Same trade_id but each settlement gets a distinct nonce, so hashes differ
+        assert_eq!(s1.data.trade_id, s2.data.trade_id);
+        assert_ne!(
+            s1.data.nonce, s2.data.nonce,
+            "each settlement from the same trade must have a unique nonce"
+        );
+        assert_ne!(
+            s1.data_hash, s2.data_hash,
+            "different nonces must produce different settlement hashes"
+        );
     }
 }

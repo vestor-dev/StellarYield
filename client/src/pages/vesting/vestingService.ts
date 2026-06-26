@@ -10,9 +10,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import freighter from "@stellar/freighter-api";
 import { RPC_URL, NETWORK_PASSPHRASE } from "../../services/soroban";
-
-const VESTING_CONTRACT_ID =
-    import.meta.env.VITE_VESTING_CONTRACT_ID ?? "";
+import { getContractId, validateContractRegistryEntry } from "../../services/contractRegistry";
 
 export interface VestingSchedule {
     /** Total tokens allocated to this address (stroops). */
@@ -44,14 +42,15 @@ export interface VestingSchedule {
 export async function fetchVestingSchedule(
     walletAddress: string,
 ): Promise<VestingSchedule | null> {
-    if (!VESTING_CONTRACT_ID) {
+    const vestingContractId = getContractId("vesting");
+    if (!vestingContractId) {
         // Contract not configured — return null gracefully (no error trace).
         return null;
     }
 
     try {
         const server = new StellarSdk.rpc.Server(RPC_URL);
-        const contract = new StellarSdk.Contract(VESTING_CONTRACT_ID);
+        const contract = new StellarSdk.Contract(vestingContractId);
 
         const account = await server.getAccount(walletAddress);
         const tx = new StellarSdk.TransactionBuilder(account, {
@@ -122,13 +121,19 @@ export interface ClaimResult {
  * @returns A `ClaimResult` indicating success or a user-friendly error.
  */
 export async function claimVested(walletAddress: string): Promise<ClaimResult> {
-    if (!VESTING_CONTRACT_ID) {
-        return { success: false, error: "Vesting contract is not configured." };
+    const vestingContractId = getContractId("vesting");
+    try {
+        validateContractRegistryEntry("vesting", vestingContractId);
+    } catch (err) {
+        return {
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+        };
     }
 
     try {
         const server = new StellarSdk.rpc.Server(RPC_URL);
-        const contract = new StellarSdk.Contract(VESTING_CONTRACT_ID);
+        const contract = new StellarSdk.Contract(vestingContractId);
 
         const account = await server.getAccount(walletAddress);
         const builtTx = new StellarSdk.TransactionBuilder(account, {

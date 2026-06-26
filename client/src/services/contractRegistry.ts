@@ -11,6 +11,7 @@
  *   3. Empty string (caller must handle missing IDs)
  */
 
+import * as StellarSdk from "@stellar/stellar-sdk";
 import registryJson from "../../../contracts/registry.json";
 
 export type ContractName =
@@ -21,7 +22,8 @@ export type ContractName =
   | "strategy"
   | "emissionController"
   | "liquidStaking"
-  | "stableswap";
+  | "stableswap"
+  | "vesting";
 
 export type NetworkName = "testnet" | "mainnet" | "local";
 
@@ -29,7 +31,7 @@ type Registry = Record<NetworkName, Record<ContractName, string>>;
 
 const registry = registryJson as Registry;
 
-function detectNetwork(): NetworkName {
+export function detectNetwork(): NetworkName {
   const passphrase =
     import.meta.env.VITE_NETWORK_PASSPHRASE ?? "";
   if (passphrase.includes("mainnet") || passphrase.includes("Public Global")) {
@@ -50,6 +52,7 @@ const ENV_OVERRIDES: Partial<Record<ContractName, string | undefined>> = {
   emissionController: import.meta.env.VITE_EMISSION_CONTROLLER_CONTRACT_ID,
   liquidStaking: import.meta.env.VITE_LIQUID_STAKING_CONTRACT_ID,
   stableswap: import.meta.env.VITE_STABLESWAP_CONTRACT_ID,
+  vesting: import.meta.env.VITE_VESTING_CONTRACT_ID,
 };
 
 export function getContractId(
@@ -67,9 +70,84 @@ export function getAllContractIds(network?: NetworkName): Record<ContractName, s
   const net = network ?? detectNetwork();
   const names: ContractName[] = [
     "vault", "zap", "token", "governance", "strategy",
-    "emissionController", "liquidStaking", "stableswap",
+    "emissionController", "liquidStaking", "stableswap", "vesting",
   ];
   return Object.fromEntries(
     names.map((n) => [n, getContractId(n, net)]),
   ) as Record<ContractName, string>;
 }
+
+export function validateContractRegistryEntry(
+  name: string,
+  contractId: string,
+  network?: NetworkName,
+): void {
+  const activeNetwork = network ?? detectNetwork();
+
+  const supportedNames: string[] = [
+    "vault",
+    "zap",
+    "token",
+    "governance",
+    "strategy",
+    "emissionController",
+    "liquidStaking",
+    "stableswap",
+    "vesting",
+  ];
+
+  if (!supportedNames.includes(name)) {
+    throw new Error(
+      `Unsupported contract name: "${name}". Valid contracts are: ${supportedNames.join(", ")}.`
+    );
+  }
+
+  if (!contractId || contractId.trim() === "") {
+    throw new Error(
+      `Missing contract ID for "${name}". Please configure it via environment variables (e.g. VITE_${name.toUpperCase()}_CONTRACT_ID or VITE_CONTRACT_ID for vault) or update contracts/registry.json.`
+    );
+  }
+
+  try {
+    new StellarSdk.Address(contractId);
+    if (contractId.length !== 56 || !contractId.startsWith("C")) {
+      throw new Error(
+        `Invalid contract ID format for "${name}": "${contractId}". Soroban contract IDs must start with 'C' and be 56 characters long.`
+      );
+    }
+  } catch (err) {
+    throw new Error(
+      `Invalid contract ID format for "${name}": "${contractId}". Soroban contract IDs must be valid Stellar contract addresses starting with 'C' and 56 characters long. Original error: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  const networks: NetworkName[] = ["testnet", "mainnet", "local"];
+  let registeredOnDifferentNetwork: NetworkName | null = null;
+  for (const net of networks) {
+    if (net !== activeNetwork) {
+      const regValue = (registryJson as any)[net]?.[name];
+      if (regValue && regValue === contractId) {
+        registeredOnDifferentNetwork = net;
+        break;
+      }
+    }
+  }
+
+  if (registeredOnDifferentNetwork) {
+    throw new Error(
+      `Network mismatch: Contract "${name}" has ID "${contractId}" which is registered for "${registeredOnDifferentNetwork}", but active network is "${activeNetwork}".`
+    );
+  }
+
+  for (const otherName of supportedNames) {
+    if (otherName !== name) {
+      const activeVal = getContractId(otherName as ContractName, activeNetwork);
+      if (activeVal && activeVal === contractId) {
+        throw new Error(
+          `Contract name mismatch: Provided ID "${contractId}" for "${name}" actually matches the configured address for contract "${otherName}" on network "${activeNetwork}".`
+        );
+      }
+    }
+  }
+}
+

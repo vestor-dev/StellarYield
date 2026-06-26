@@ -23,7 +23,7 @@ export default function ConnectWalletButton() {
       <button
         type="button"
         onClick={disconnectWallet}
-        className="glass-card flex items-center gap-2 border-[#6C5DD3]/50 px-4 py-2 transition-colors hover:border-red-500/50"
+        className="glass-card flex items-center gap-2 border-[#214fba]/20 px-4 py-2 transition-colors hover:border-red-500/40 text-slate-800 font-semibold text-sm"
         title="Disconnect wallet"
       >
         <span className="h-2 w-2 rounded-full bg-green-500" />
@@ -32,9 +32,9 @@ export default function ConnectWalletButton() {
           {truncateKey(walletAddress)}
         </span>
         {walletAddressType === "contract" ? (
-          <Cpu size={14} className="text-cyan-300" />
+          <Cpu size={14} className="text-[#214fba]" />
         ) : null}
-        <LogOut size={14} className="text-red-400" />
+        <LogOut size={14} className="text-red-500" />
       </button>
     );
   }

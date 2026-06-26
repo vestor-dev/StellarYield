@@ -50,6 +50,58 @@ export function reconcilePortfolio(positions: Position[], balances: ProviderBala
 }
 
 export default reconcilePortfolio;
+
+// ── Durable Reconciliation History ──────────────────────────────────────
+
+export interface ReconciliationHistoryEntry {
+  id: string;
+  walletAddress: string;
+  timestamp: string;
+  status: 'success' | 'partial' | 'failed';
+  changeCount: number;
+  mismatchCount: number;
+  changes: PositionChange[];
+  mismatches: ReconciliationMismatch[];
+  error?: string;
+}
+
+const reconciliationStore: ReconciliationHistoryEntry[] = [];
+
+export function resetReconciliationStore(): void {
+  reconciliationStore.length = 0;
+}
+
+export function getReconciliationStore(): readonly ReconciliationHistoryEntry[] {
+  return reconciliationStore;
+}
+
+export function persistReconciliationEvent(entry: ReconciliationHistoryEntry): void {
+  reconciliationStore.push(entry);
+}
+
+export function queryReconciliationHistory(
+  walletAddress: string,
+  options: { limit?: number; status?: 'success' | 'partial' | 'failed'; startDate?: string; endDate?: string } = {},
+): ReconciliationHistoryEntry[] {
+  let results = reconciliationStore.filter((e) => e.walletAddress === walletAddress);
+
+  if (options.status) {
+    results = results.filter((e) => e.status === options.status);
+  }
+  if (options.startDate) {
+    const start = new Date(options.startDate).getTime();
+    results = results.filter((e) => new Date(e.timestamp).getTime() >= start);
+  }
+  if (options.endDate) {
+    const end = new Date(options.endDate).getTime();
+    results = results.filter((e) => new Date(e.timestamp).getTime() <= end);
+  }
+
+  results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  return results.slice(0, options.limit ?? 50);
+}
+
 export interface PortfolioPosition {
   assetId: string
   amount: number
@@ -246,25 +298,27 @@ export class PortfolioReconcileService {
     status: string = 'success',
     error?: unknown
   ): Promise<void> {
-    const eventData: Record<string, unknown> = {
+    const entry: ReconciliationHistoryEntry = {
+      id: `recon_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       walletAddress,
-      changes: changes.length,
-      mismatches: mismatches.length,
-      status,
       timestamp: new Date().toISOString(),
+      status: status as ReconciliationHistoryEntry['status'],
+      changeCount: changes.length,
+      mismatchCount: mismatches.length,
+      changes,
+      mismatches,
     }
     if (error) {
-      eventData.error = String(error)
+      entry.error = String(error)
     }
-    console.log('[PortfolioReconcile]', eventData)
+    persistReconciliationEvent(entry)
   }
 
   async getReconciliationHistory(
     walletAddress: string,
-    _limit: number = 10
-  ): Promise<ReconciliationResult[]> {
-    // Placeholder for fetching history from audit logs
-    return []
+    limit: number = 10
+  ): Promise<ReconciliationHistoryEntry[]> {
+    return queryReconciliationHistory(walletAddress, { limit })
   }
 }
 

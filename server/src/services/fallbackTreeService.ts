@@ -508,6 +508,235 @@ export class FallbackTreeRegistry {
   }
 }
 
+// ── Audit / Persistence Types ─────────────────────────────────────────────
+
+/**
+ * Serialisable record of a single failover decision.
+ * Persisting this record allows maintainers to:
+ *  - Understand which path was selected and why.
+ *  - Replay the decision deterministically given the same tree + inputs.
+ *  - Audit protocol instability post-mortem.
+ */
+export interface AuditRecord {
+  /** Unique identifier for this audit record */
+  id: string;
+  /** Key of the tree that was traversed */
+  treeKey: string;
+  /** Serialised snapshot of the tree root at the time of traversal */
+  treeSnapshot: FallbackNode;
+  /** Health inputs for each evaluated node (nodeId → HealthCheck) */
+  healthInputs: Record<string, HealthCheck>;
+  /** Blocklist inputs for each evaluated node (nodeId → BlocklistCheck) */
+  blocklistInputs: Record<string, BlocklistCheck>;
+  /** Traversal context parameters used */
+  contextParams: {
+    minHealthScore: number;
+    allowDegraded: boolean;
+    maxDepth: number;
+    now: number;
+  };
+  /** The traversal result (path, selected node, terminal failure) */
+  result: TraversalResult;
+  /** ISO timestamp when this record was created */
+  recordedAt: string;
+}
+
+/**
+ * Persistence interface for fallback audit records.
+ * Allows production code to use a database-backed store while tests use
+ * the in-memory implementation.
+ */
+export interface FallbackAuditStore {
+  save(record: AuditRecord): Promise<void>;
+  loadAll(): Promise<AuditRecord[]>;
+  loadById(id: string): Promise<AuditRecord | null>;
+  loadByTreeKey(treeKey: string, limit?: number): Promise<AuditRecord[]>;
+  clear(): Promise<void>;
+}
+
+/**
+ * In-memory audit store (suitable for tests and development).
+ */
+export class InMemoryFallbackAuditStore implements FallbackAuditStore {
+  private records: AuditRecord[] = [];
+
+  async save(record: AuditRecord): Promise<void> {
+    this.records.push(record);
+  }
+
+  async loadAll(): Promise<AuditRecord[]> {
+    return [...this.records];
+  }
+
+  async loadById(id: string): Promise<AuditRecord | null> {
+    return this.records.find((r) => r.id === id) ?? null;
+  }
+
+  async loadByTreeKey(treeKey: string, limit = 50): Promise<AuditRecord[]> {
+    return this.records
+      .filter((r) => r.treeKey === treeKey)
+      .slice(-limit)
+      .reverse();
+  }
+
+  async clear(): Promise<void> {
+    this.records = [];
+  }
+}
+
+// ── Deterministic Replay ──────────────────────────────────────────────────
+
+/**
+ * Replay a recorded failover decision deterministically.
+ *
+ * Given an AuditRecord, re-runs the traversal using the exact same tree
+ * snapshot, health inputs, blocklist inputs, and context parameters that
+ * produced the original decision. The replayed result must match the
+ * recorded `selectedNode` (or both must be terminal failures) for the
+ * record to be considered consistent.
+ *
+ * @returns The replayed TraversalResult plus a `consistent` flag.
+ */
+export async function replayTraversal(
+  record: AuditRecord,
+): Promise<{ result: TraversalResult; consistent: boolean }> {
+  const capturedHealth = record.healthInputs;
+  const capturedBlocklist = record.blocklistInputs;
+
+  const context: TraversalContext = {
+    checkHealth: (nodeId: string) =>
+      capturedHealth[nodeId] ?? {
+        status: 'unknown' as NodeStatus,
+        score: 0,
+        checkedAt: new Date(record.contextParams.now).toISOString(),
+        reasons: ['No health record captured for this node'],
+      },
+    checkBlocklist: (nodeId: string) =>
+      capturedBlocklist[nodeId] ?? {
+        isBlocked: false,
+        checkedAt: new Date(record.contextParams.now).toISOString(),
+      },
+    minHealthScore: record.contextParams.minHealthScore,
+    allowDegraded: record.contextParams.allowDegraded,
+    maxDepth: record.contextParams.maxDepth,
+    now: record.contextParams.now,
+  };
+
+  const result = await traverseFallbackTree(record.treeSnapshot, context);
+
+  const originalSelected = record.result.selectedNode?.id ?? null;
+  const replayedSelected = result.selectedNode?.id ?? null;
+  const consistent =
+    originalSelected === replayedSelected &&
+    record.result.terminalFailure === result.terminalFailure;
+
+  return { result, consistent };
+}
+
+// ── Audited Registry ──────────────────────────────────────────────────────
+
+/**
+ * Extension of FallbackTreeRegistry that persists every traversal decision
+ * to an AuditStore. Supports post-mortem replay of any recorded failover.
+ */
+export class AuditedFallbackTreeRegistry extends FallbackTreeRegistry {
+  private auditStore: FallbackAuditStore;
+  private idCounter = 0;
+
+  constructor(
+    auditStore: FallbackAuditStore,
+    config: Partial<FallbackTreeConfig> = {},
+  ) {
+    super(config);
+    this.auditStore = auditStore;
+  }
+
+  /**
+   * Traverse a tree and persist the full decision record.
+   */
+  override async traverse(
+    key: string,
+    contextOverrides: Partial<TraversalContext> = {},
+  ): Promise<TraversalResult> {
+    const root = this.getTree(key);
+    if (!root) {
+      throw new Error(`Fallback tree not found: ${key}`);
+    }
+
+    const now = contextOverrides.now ?? Date.now();
+    const healthInputs: Record<string, HealthCheck> = {};
+    const blocklistInputs: Record<string, BlocklistCheck> = {};
+
+    // Wrap the health/blocklist checkers to capture inputs for audit.
+    const capturingContext: Partial<TraversalContext> = {
+      ...contextOverrides,
+      now,
+      checkHealth: async (nodeId: string) => {
+        const result = await Promise.resolve(
+          (contextOverrides.checkHealth ?? (() => ({
+            status: 'healthy' as NodeStatus,
+            score: 100,
+            checkedAt: new Date(now).toISOString(),
+            reasons: [],
+          })))(nodeId),
+        );
+        healthInputs[nodeId] = result;
+        return result;
+      },
+      checkBlocklist: async (nodeId: string) => {
+        const result = await Promise.resolve(
+          (contextOverrides.checkBlocklist ?? (() => ({
+            isBlocked: false,
+            checkedAt: new Date(now).toISOString(),
+          })))(nodeId),
+        );
+        blocklistInputs[nodeId] = result;
+        return result;
+      },
+    };
+
+    const traversalResult = await super.traverse(key, capturingContext);
+
+    const cfg = this.getConfig();
+    const record: AuditRecord = {
+      id: `audit-${key}-${++this.idCounter}-${now}`,
+      treeKey: key,
+      treeSnapshot: JSON.parse(JSON.stringify(root)) as FallbackNode,
+      healthInputs,
+      blocklistInputs,
+      contextParams: {
+        minHealthScore: contextOverrides.minHealthScore ?? cfg.defaultMinHealthScore,
+        allowDegraded: contextOverrides.allowDegraded ?? cfg.defaultAllowDegraded,
+        maxDepth: contextOverrides.maxDepth ?? cfg.defaultMaxDepth,
+        now,
+      },
+      result: traversalResult,
+      recordedAt: new Date(now).toISOString(),
+    };
+
+    await this.auditStore.save(record);
+    return traversalResult;
+  }
+
+  /**
+   * Retrieve all audit records for a tree key.
+   */
+  async getAuditRecords(treeKey: string, limit = 50): Promise<AuditRecord[]> {
+    return this.auditStore.loadByTreeKey(treeKey, limit);
+  }
+
+  /**
+   * Replay a specific audit record and verify consistency.
+   */
+  async replayById(
+    id: string,
+  ): Promise<{ result: TraversalResult; consistent: boolean } | null> {
+    const record = await this.auditStore.loadById(id);
+    if (!record) return null;
+    return replayTraversal(record);
+  }
+}
+
 // ── Export singleton instance ─────────────────────────────────────────────
 
 export const fallbackTreeRegistry = new FallbackTreeRegistry();
